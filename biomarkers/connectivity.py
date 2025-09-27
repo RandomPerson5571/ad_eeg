@@ -10,7 +10,7 @@ def compute_connectivity(epochs, fmin=4, fmax=12):
     sfreq=epochs.info['sfreq'],
     fmin=fmin,
     fmax=fmax,
-    faverage=True,
+    faverage=False,
     verbose=False
     )
 

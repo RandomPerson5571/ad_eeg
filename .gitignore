@@ -11,27 +11,18 @@ dist/
 build/
 
 .venv/
+parquet_files/
 
 # --------------------
 # EEG Raw Data (avoid committing multi-GB files)
 # --------------------
-*.edf
-*.bdf
-*.gdf
-*.vhdr
-*.vmrk
-*.eeg
 *.set
-*.fdt
-*.mat
-*.dat
-*.csv   # optional — keep if you only want parquet
+*.csv
 EEG_data/
 
 # --------------------
 # Feature Storage
 # --------------------
-# (Keep parquet, ignore large intermediates)
 !*.parquet
 
 # --------------------

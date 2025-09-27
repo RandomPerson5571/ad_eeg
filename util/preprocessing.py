@@ -11,7 +11,7 @@ def preprocess_EEG(eeg_raw):
 
     original = eeg_raw.copy() # for testing
 
-    eeg_raw.notch_filter(freqs=[50, 100, 150])
+    eeg_raw.notch_filter(freqs=NOTCH_FREQ)
     eeg_raw.filter(l_freq=1., h_freq=None, fir_design='firwin')
 
     # artifact subspace removal (ASR)
@@ -58,9 +58,10 @@ def preprocess_EEG(eeg_raw):
     # clean_eeg_path = os.path.join(base_dir, "..", "EEG_clean_data", "dataset2", "cleaned_sub-001_raw.fif")
     # eeg_raw.save(clean_eeg_path, overwrite=True)
 
-    # epoching
+    return eeg_raw # clean eeg
 
-    eeg_raw.set_eeg_reference('average')
-    epochs = mne.make_fixed_length_epochs(eeg_raw, duration=EPOCH_LENGTH, overlap=EPOCH_OVERLAP, preload=True)
+def convert_to_epochs(clean_eeg):
+    clean_eeg.set_eeg_reference('average')
+    epochs = mne.make_fixed_length_epochs(clean_eeg, duration=EPOCH_LENGTH, overlap=EPOCH_OVERLAP, preload=True)
 
     return epochs
