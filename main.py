@@ -18,86 +18,46 @@ participant_data = get_participant_data()
 "MMSE" : mmse
 """
 
-dataset = 2
 
-for i in range(numParticipants):
+for dataset in DATASETS:
 
-    ind = dataset-1
+    for i in range(numParticipants):
 
-    participant_id = participant_data[ind].iloc[0, i]
-    dataset_id = dataset
-    label = participant_data[ind].loc[participant_data[ind]['participant_id'] == participant_id, 'Group'].values[0]
+        ind = dataset-1
 
-    participant_path = "EEG_data\\dataset2\\sub-{0:03d}\\eeg\\sub-{0:03d}_task-eyesclosed_eeg.set".format(i+1)
+        participant_id = participant_data[ind].iloc[0, i]
+        dataset_id = dataset
+        label = participant_data[ind].loc[participant_data[ind]['participant_id'] == participant_id, 'Group'].values[0]
 
-    print(f"Processing participant {i+1}/88 (dataset {dataset})")
-    print(f"Reading data for participant {participant_id} from {participant_path}")
+        participant_path = "EEG_data\\dataset2\\sub-{0:03d}\\eeg\\sub-{0:03d}_task-eyesclosed_eeg.set".format(i+1)
 
-    eeg_raw = read_eeg_data(participant_path, sfreq=SAMPLING_RATE)
+        print(f"Processing participant {i+1}/88 (dataset {dataset})")
+        print(f"Reading data for participant {participant_id} from {participant_path}")
 
-    clean_eeg = preprocess_EEG(eeg_raw)
+        eeg_raw = read_eeg_data(participant_path, sfreq=SAMPLING_RATE)
 
-    epochs = convert_to_epochs(clean_eeg)
+        clean_eeg = preprocess_EEG(eeg_raw)
 
-    data = epochs.get_data()
-        
-    print(f"Data shape (n_epochs, n_channels, n_times): {data.shape}")
+        epochs = convert_to_epochs(clean_eeg)
 
-    features = []
+        data = epochs.get_data()
+            
+        print(f"Data shape (n_epochs, n_channels, n_times): {data.shape}")
 
-    derivatives_path = "EEG_data\\dataset{0}\\derivatives\\sub-{1:03d}\\eeg\\sub-{1:03d}_task-eyesclosed_eeg.set".format(dataset, i+1)
-    derivative = read_eeg_data(derivatives_path, sfreq=SAMPLING_RATE)
+        features = []
 
-    plot_eeg(derivative, target_channels=TARGET_CHANNELS)
-    plot_power_spectrum(derivative, target_channels=TARGET_CHANNELS)
-    plot_eeg(clean_eeg, target_channels=TARGET_CHANNELS)
-    plot_power_spectrum(clean_eeg, target_channels=TARGET_CHANNELS)
+        derivatives_path = "EEG_data\\dataset{0}\\derivatives\\sub-{1:03d}\\eeg\\sub-{1:03d}_task-eyesclosed_eeg.set".format(dataset, i+1)
+        derivative = read_eeg_data(derivatives_path, sfreq=SAMPLING_RATE)
 
-    all_epoch_features = extract_eeg_features(data)
+        plot_eeg(derivative, target_channels=TARGET_CHANNELS)
+        plot_power_spectrum(derivative, target_channels=TARGET_CHANNELS)
+        plot_eeg(clean_eeg, target_channels=TARGET_CHANNELS)
+        plot_power_spectrum(clean_eeg, target_channels=TARGET_CHANNELS)
 
-    df = pd.DataFrame(all_epoch_features)
+        all_epoch_features = extract_eeg_features(data)
 
-    save_as_parquet(df, participant_id, dataset_id, label)
-        
-    print(df.head())
+        df = pd.DataFrame(all_epoch_features)
 
-# for dataset in DATASETS:
-
-#     for i in range(numParticipants):
-
-#         ind = dataset-1
-
-#         participant_id = participant_data[ind].iloc[0, i]
-#         dataset_id = dataset
-#         label = participant_data[ind].iloc[3, i]
-
-#         participant_path = "EEG_data\\dataset2\\sub-{0:03d}\\eeg\\sub-{0:03d}_task-eyesclosed_eeg.set".format(i+1)
-
-#         print(f"Processing participant {i+1}/88 (dataset {dataset})")
-#         print(f"Reading data for participant {participant_id} from {participant_path}")
-
-#         eeg_raw = read_eeg_data(participant_path, sfreq=SAMPLING_RATE)
-
-#         epochs = preprocess_EEG(eeg_raw)
-
-#         data = epochs.get_data()
-        
-#         print(f"Data shape (n_epochs, n_channels, n_times): {data.shape}")
-
-#         features = []
-
-#         derivatives_path = "EEG_data\\dataset{dataset}\\derivatives\\sub-{0:03d}\\eeg\\sub-{0:03d}_task-eyesclosed_eeg.set".format(i+1)
-#         derivative = read_eeg_data(derivatives_path, sfreq=SAMPLING_RATE)
-
-#         plot_eeg(derivative, target_channels=TARGET_CHANNELS)
-#         plot_power_spectrum(derivative, target_channels=TARGET_CHANNELS)
-#         plot_eeg(epochs, target_channels=TARGET_CHANNELS)
-#         plot_power_spectrum(epochs, target_channels=TARGET_CHANNELS)
-
-#         all_epoch_features = extract_eeg_features(data)
-
-#         df = pd.DataFrame(all_epoch_features)
-
-#         save_as_parquet(df, participant_id, dataset_id, label)
-        
-#         print(df.head())
+        save_as_parquet(df, participant_id, dataset_id, label)
+            
+        print(df.head())

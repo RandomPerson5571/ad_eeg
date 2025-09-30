@@ -10,5 +10,10 @@ df = pd.read_parquet("parquet_files/all_features.parquet")
 
 features, labels = load_features()
 
+# Labels
+# A - Alzheimers
+# C - Control (Healthy)
+# F - Frontroltemporal Dementia
+
 print(features)
 print(labels)
