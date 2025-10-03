@@ -19,8 +19,6 @@ DATASETS = [2, 3]      # Active datasets
 SAMPLING_RATE = 500   # Hz
 
 # Filtering
-HP_FILTER = 1.0       # High-pass cutoff (Hz)
-LP_FILTER = 40.0      # Low-pass cutoff (Hz)
 NOTCH_FREQ = [50, 100, 150]     # Set to None if not needed (e.g., 50.0 for EU)
 
 # Epoching
