@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 def binarize(signal):
     median = np.median(signal)
@@ -14,7 +15,7 @@ def lempel_ziv_complexity(signal):
     s = ''.join(map(str, binary_seq))
     i, k, l = 0, 1, 1
     n = len(s)
-    complexity = 1
+    C = 1
 
     while True:
         if s[i + k - 1] != s[l + k - 1]:
@@ -22,7 +23,7 @@ def lempel_ziv_complexity(signal):
                 l = k
             i += 1
             if i == l:
-                complexity += 1
+                C += 1
                 l += 1
                 if l + 1 > n:
                     break
@@ -31,10 +32,12 @@ def lempel_ziv_complexity(signal):
         else:
             k += 1
             if l + k > n:
-                complexity += 1
+                C += 1
                 break
     
-    return complexity
+    C = C / (n / math.log2(n))
+
+    return C
 
 def multiscale_entropy(signal, m=2, r=None, maxscale =20):
 

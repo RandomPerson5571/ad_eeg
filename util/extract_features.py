@@ -19,8 +19,7 @@ def extract_eeg_features(data):
 
         epoch_mean_ts = epoch.mean(axis=0)
 
-        binary_seq = (epoch_mean_ts > np.median(epoch_mean_ts)).astype(int).tolist()
-        lzc = lempel_ziv_complexity(binary_seq)
+        lzc = lempel_ziv_complexity(epoch_mean_ts)
 
         mse_vector = multiscale_entropy(epoch_mean_ts)
         mse_mean = np.nanmean(mse_vector)

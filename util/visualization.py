@@ -1,25 +1,26 @@
+import numpy as np
+from scipy.signal import welch
 import matplotlib.pyplot as plt
 
-def plot_power_spectrum(epoch_mne, target_channels):
+from config import SAMPLING_RATE
 
-    psd, freqs = epoch_mne.compute_psd(
-        method="welch",
-        fmin=1,
-        fmax=40,
-        n_fft=256,
-        picks=target_channels,
-        verbose=False
-    ).get_data(return_freqs=True)
+def plot_power_spectrum(eeg_signal, target_channels):
 
-    psd = psd[0]
+    if eeg_signal.ndim == 1:
+        eeg_signal = eeg_signal[np.newaxis, :]  # make 2D
 
-    plt.figure(figsize=(10, 5))
-    plt.semilogy(freqs, psd.T)
-    plt.title("Power Spectral Density (PSD)")
+    plt.figure(figsize=(10, 6))
+    
+    for ch_idx, ch_data in enumerate(eeg_signal):
+        f, psd = welch(ch_data, SAMPLING_RATE, nperseg=SAMPLING_RATE*2)
+        plt.semilogy(f, psd, label=target_channels[ch_idx] if target_channels else f"Ch{ch_idx+1}")
+    
+    plt.title("EEG Power Spectrum")
     plt.xlabel("Frequency (Hz)")
-    plt.ylabel("Power/Frequency (dB/Hz)")
-    plt.xlim(1, 40)
-    plt.grid()
+    plt.ylabel("Power Spectral Density (V²/Hz)")
+    plt.xlim(0, 45)
+    plt.legend()
+    plt.grid(True)
     plt.show()
 
 def plot_eeg(epoch_mne, target_channels):

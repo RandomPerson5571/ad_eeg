@@ -29,7 +29,7 @@ for dataset in DATASETS:
         dataset_id = dataset
         label = participant_data[ind].loc[participant_data[ind]['participant_id'] == participant_id, 'Group'].values[0]
 
-        participant_path = "EEG_data\\dataset2\\sub-{0:03d}\\eeg\\sub-{0:03d}_task-eyesclosed_eeg.set".format(i+1)
+        participant_path = "EEG_data\\dataset{0}\\sub-{1:03d}\\eeg\\sub-{1:03d}_task-eyesclosed_eeg.set".format(dataset, i+1)
 
         print(f"Processing participant {i+1}/88 (dataset {dataset})")
         print(f"Reading data for participant {participant_id} from {participant_path}")
