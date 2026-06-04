@@ -6,9 +6,6 @@ from config import SAMPLING_RATE
 
 def plot_power_spectrum(eeg_signal, target_channels):
 
-    if eeg_signal.ndim == 1:
-        eeg_signal = eeg_signal[np.newaxis, :]  # make 2D
-
     plt.figure(figsize=(10, 6))
     
     for ch_idx, ch_data in enumerate(eeg_signal):

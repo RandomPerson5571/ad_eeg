@@ -9,6 +9,7 @@ def extract_eeg_features(data):
     merged_features = []
 
     for epoch_id, epoch in enumerate(data):
+        print(f"Epoch: {epoch_id}")
 
         ch_names = [f"EEG{i}" for i in range(epoch.shape[0])]
         ch_types = ["eeg"] * epoch.shape[0]

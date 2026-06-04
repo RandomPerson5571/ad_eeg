@@ -3,8 +3,57 @@ import math
 
 def binarize(signal):
     median = np.median(signal)
-    binary_seq = (signal > median).astype(int)
+    binary_seq = (signal > median).astype(np.uint8)
     return binary_seq
+
+def LZ76(signal):
+    # Median binarization
+    s = binarize(signal).tolist()
+
+    dictionary = set()
+    w = []
+    C = 0
+    for bit in s:
+        w.append(bit)
+        tup = tuple(w)
+        if tup not in dictionary:
+            dictionary.add(tup)
+            C += 1
+            w = []
+
+    n = len(s)
+    return C / (n / math.log2(n))
+
+def fast_lempel_ziv_complexity(signal):
+
+    # signal = convert_to_binary(signal)
+
+    s = binarize(signal)
+    i, k, l = 0, 1, 1
+    n = len(s)
+    C = 1
+
+    while True:
+        if s[i + k - 1] != s[l + k - 1]:
+            if k > l:
+                l = k
+            i += 1
+            if i == l:
+                C += 1
+                l += 1
+                if l + 1 > n:
+                    break
+                i = 0
+            k = 1
+        else:
+            k += 1
+            if l + k > n:
+                C += 1
+                break
+    
+    C = C / (n / math.log2(n))
+
+    return C
 
 def lempel_ziv_complexity(signal):
 

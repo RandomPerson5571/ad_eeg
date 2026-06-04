@@ -41,10 +41,10 @@ def save_as_parquet(df, participant_id, dataset_id, label):
         existing = pd.read_parquet(combined_parquet_path)
         combined = pd.concat([existing, df], ignore_index=True)
         combined.to_parquet(combined_parquet_path, engine="pyarrow")
+        print(f"Combined dataset saved to {combined_parquet_path}")
     else:
         df.to_parquet(combined_parquet_path, engine="pyarrow")
-
-    print(f"Combined dataset saved to {combined_parquet_path}")
+        print(f"Initialized new dataset and saved to {combined_parquet_path}")
 
 def load_features():
     combined_parquet_path = PARQUET_COMBINED_FILE

@@ -19,7 +19,7 @@ def preprocess_EEG(eeg_raw, freq_filter=True, notch_filter=False, asr=False, asr
 
     # filter the data
     if freq_filter:
-        eeg_raw.filter(l_freq=0.5, h_freq=None, fir_design='firwin')
+        eeg_raw.filter(l_freq=0.5, h_freq=40, fir_design='firwin', filter_length='auto')
     
     if notch_filter:
         eeg_raw.notch_filter(freqs=NOTCH_FREQ)
@@ -80,9 +80,12 @@ def preprocess_EEG(eeg_raw, freq_filter=True, notch_filter=False, asr=False, asr
         n_dropped = reject_log.bad_epochs.sum()
         print(f"Dropped {n_dropped} epochs out of {len(epochs_ar)}")
         p_dropped = n_dropped/len(epochs_ar) * 100
-        print(f"Percent dropped : %{p_dropped}")
+        print(f"Percent dropped : {p_dropped}%")
 
     return eeg_clean, epochs # clean eeg & epochs
+
+def standard_preprocess_EEG(eeg_raw):
+    return 0
 
 def extract_erp_epochs(clean_eeg, cond1, cond2, epochLowLim=-0.3, epochHiLim=0.7):
     events_from_annot, event_dict = mne.events_from_annotations(clean_eeg)
