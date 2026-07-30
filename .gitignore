@@ -26,6 +26,13 @@ EEG_data/
 !*.parquet
 
 # --------------------
+# Results (generated at runtime)
+# --------------------
+results/*
+!results/.gitkeep
+!results/metrics.example.json
+
+# --------------------
 # System / Editor
 # --------------------
 .DS_Store

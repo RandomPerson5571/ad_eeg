@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+title: "EEG Dementia Classification Pipeline"
+message: "If you use this software, please cite it as below."
+authors:
+  - name: "EEG Project contributors"
+repository-code: "https://github.com/your-org/eeg-project"
+license: MIT
+keywords:
+  - eeg
+  - alzheimer
+  - dementia
+  - machine-learning
+preferred-citation:
+  type: dataset
+  title: "A Dataset of Scalp EEG Recordings of Alzheimer's Disease, Frontotemporal Dementia and Healthy Subjects from Routine EEG"
+  authors:
+    - family-names: Miltiadous
+      given-names: Andreas
+    - family-names: Tzimourta
+      given-names: Konstantinos
+    - family-names: Giannakeas
+      given-names: Nikos
+    - family-names: Afrantou
+      given-names: Tatiana
+    - family-names: Ioannidis
+      given-names: Georgios
+    - family-names: Grigoriadis
+      given-names: Nikolaos
+    - family-names: Giannakakis
+      given-names: Georgios
+    - family-names: Tsiknakis
+      given-names: Michalis
+    - family-names: Tsipouras
+      given-names: Panagiotis
+  doi: 10.3390/data8060095
+  year: 2023
+  journal: Data

@@ -1,112 +1,145 @@
-# EEG Project
+# EEG Dementia Classification Pipeline
 
-## Overview
+[![Dataset DOI](https://img.shields.io/badge/Dataset-10.3390%2Fdata8060095-blue)](https://doi.org/10.3390/data8060095)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-This repository supports EEG data ingestion, preprocessing, feature extraction, and classifier training for dementia-related EEG analysis.
+Reproducible pipeline for EEG-based classification of Alzheimer's disease, frontotemporal dementia, and healthy controls using hand-crafted biomarkers and classical ML.
 
-The current production-ready pipelines include:
+> **Note:** This project ingests pre-recorded clinical EEG. There is no live data acquisition hardware integration.
 
-- `main.py` for reading raw EEG, cleaning, epoching, and saving features to `parquet_files/all_features.parquet`
-- `classifier_models/train_XGBoost.py` for training a tuned XGBoost classifier
-- `classifier_models/cnn.py` for training a shallow neural network classifier on extracted features
+## Quick start
 
-## Requirements
+```bash
+git clone <your-repo-url>
+cd eeg-project
 
-Install the Python dependencies listed in `requirements.txt` and activate the project virtual environment before running any scripts.
-
-Recommended installation:
-
-```powershell
-cd "C:\Users\griff\Downloads\EEG Project Folder"
+python -m venv .venv
+# Windows
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+# macOS/Linux
+source .venv/bin/activate
+
+pip install -r requirements.txt
 ```
 
-## Data preparation
+### 1. Obtain raw EEG data
 
-1. Place the EEG data under `EEG_data/` in the expected BIDS-like structure.
-2. Confirm dataset IDs in `config.py` via `DATASETS`.
-3. Run `main.py` to preprocess EEG and save extracted features into the parquet store.
+Download from [Miltiadous et al. (DOI 10.3390/data8060095)](https://doi.org/10.3390/data8060095) and extract into `EEG_data/`.
 
-> Note: `main.py` currently processes a single participant by default. Extend the loop in `main.py` or adapt it to your dataset if you need multi-subject feature extraction.
-
-## Feature extraction
-
-The feature extraction pipeline lives in `util/extract_features.py` and uses:
-
-- Lempel–Ziv complexity
-- multiscale entropy
-- relative band power
-- spectral ratios
-- connectivity features
-
-Extracted features are saved through `util/io.py` into `parquet_files/all_features.parquet`.
-
-## Training models
-
-### Train the XGBoost production classifier
-
-```powershell
-python classifier_models\train_XGBoost.py
+```bash
+python scripts/download_data.py
 ```
 
-This script:
+See [docs/DATA.md](docs/DATA.md) for layout and citation details.
 
-- loads features from `parquet_files/all_features.parquet`
-- splits data into train/test sets
-- performs Bayesian hyperparameter search over the XGBoost classifier
-- saves the tuned model to `classifier_models/saved_models/xgboost_eeg_classifier.joblib`
+### 2. Extract features
 
-### Train the EEG MLP classifier
+```bash
+# All subjects, both datasets
+python scripts/ingest_features.py --all-datasets --all
 
-```powershell
-python classifier_models\cnn.py
+# Single subject (testing)
+python scripts/ingest_features.py --dataset 2 --subject 1
 ```
 
-This script:
+### 3. Train models
 
-- loads the same feature store
-- trains a feature-based neural network classifier
-- saves the model to `classifier_models/saved_models/eeg_mlp_classifier.joblib`
+```bash
+python scripts/run_pipeline.py --train xgboost,mlp
+```
 
-## Production notes
+Or individually:
 
-- Ensure `parquet_files/all_features.parquet` exists before training.
-- Use `joblib.load` to restore trained models for inference.
-- Store the trained model artifacts in `classifier_models/saved_models`.
-- Use the saved model path as a source of truth for production inference.
+```bash
+python classifier_models/train_XGBoost.py
+python classifier_models/train_mlp.py
+```
 
-### Example inference snippet
+### 4. End-to-end
+
+```bash
+python scripts/run_pipeline.py --ingest --all-datasets --train xgboost,mlp
+```
+
+## Zenodo artifacts
+
+Derived files (features, models, metrics) can be downloaded from Zenodo after upload:
+
+```bash
+python scripts/fetch_artifacts.py --record-id YOUR_RECORD_ID
+```
+
+Update `data/manifest.json` with your Zenodo record ID after publishing artifacts.
+
+## Jupyter notebooks
+
+```bash
+jupyter lab notebooks/
+```
+
+| Notebook | Description |
+|----------|-------------|
+| [01_dataset_overview](notebooks/01_dataset_overview.ipynb) | Demographics and class balance |
+| [02_preprocessing_and_qc](notebooks/02_preprocessing_and_qc.ipynb) | Single-subject preprocessing |
+| [03_feature_extraction](notebooks/03_feature_extraction.ipynb) | Feature distributions |
+| [04_model_training](notebooks/04_model_training.ipynb) | Subject-level model training |
+| [05_results_and_interpretation](notebooks/05_results_and_interpretation.ipynb) | Metrics and limitations |
+
+## Project structure
+
+```
+├── biomarkers/           # Feature computation (band power, complexity, connectivity)
+├── classifier_models/    # XGBoost and MLP trainers
+├── docs/                 # Data, methodology, reproducibility guides
+├── notebooks/            # Interactive walkthroughs
+├── scripts/              # CLI entry points (ingest, train, download, fetch)
+├── util/                 # I/O, preprocessing, feature extraction
+├── config.py             # Paths and parameters
+└── EEG_data/             # Raw EEG (gitignored, download separately)
+```
+
+## Documentation
+
+- [Data guide](docs/DATA.md) — source dataset, layout, Zenodo artifacts
+- [Methodology](docs/METHODOLOGY.md) — preprocessing, features, evaluation
+- [Reproducibility](docs/REPRODUCIBILITY.md) — exact commands and seeds
+
+## Inference example
 
 ```python
 import joblib
 import pandas as pd
 
 artifact = joblib.load("classifier_models/saved_models/xgboost_eeg_classifier.joblib")
-pipeline = artifact["pipeline"] if isinstance(artifact, dict) else artifact
+pipeline = artifact["pipeline"]
+feature_names = artifact["feature_names"]
 
-example_features = pd.DataFrame([
-    {
-        "lzc": 0.52,
-        "mse_mean": 0.95,
-        "rel_alpha": 0.12,
-        "rel_beta": 0.15,
-        "rel_theta": 0.22,
-        "rel_delta": 0.10,
-        "alpha_peak_freq": 10.2,
-        "theta_alpha_ratio": 1.8,
-        "theta_beta_ratio": 1.4,
-        "slow_fast_ratio": 0.8,
-    }
-])
+example = pd.DataFrame([{name: 0.0 for name in feature_names}])
+example["rel_alpha"] = 0.12
+example["lzc"] = 0.52
 
-prediction = pipeline.predict(example_features)
-print("Predicted label:", prediction)
+prediction = pipeline.predict(example)
+label = artifact["label_encoder"].inverse_transform(prediction)
+print("Predicted group:", label)
 ```
 
-## Recommended production workflow
+## Citation
 
-1. Run raw EEG ingestion and preprocessing.
-2. Extract and save epoch-level features.
-3. Train a model on the full feature store.
-4. Save the final model artifact and use it for inference in a separate deployment script.
+If you use this code or the underlying dataset, please cite:
+
+```bibtex
+@article{miltiadous2023dataset,
+  title={A Dataset of Scalp EEG Recordings of Alzheimer's Disease, Frontotemporal Dementia and Healthy Subjects from Routine EEG},
+  author={Miltiadous, Andreas and others},
+  journal={Data},
+  year={2023},
+  doi={10.3390/data8060095}
+}
+```
+
+See also [CITATION.cff](CITATION.cff).
+
+## License
+
+Code: MIT — see [LICENSE](LICENSE). Raw EEG data is governed by the source dataset license.

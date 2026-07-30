@@ -73,16 +73,18 @@ def preprocess_EEG(eeg_raw, freq_filter=True, notch_filter=False, asr=False, asr
     if fle:
         epochs = convert_to_epochs(eeg_clean)
 
+    epochs_out = epochs
     if AR:
-        ar = autoreject.AutoReject(n_interpolate=[1, 2, 3, 4], random_state=11,n_jobs=1, verbose=True)
+        ar = autoreject.AutoReject(n_interpolate=[1, 2, 3, 4], random_state=11, n_jobs=1, verbose=True)
         ar.fit(epochs[:20])
         epochs_ar, reject_log = ar.transform(epochs, return_log=True)
         n_dropped = reject_log.bad_epochs.sum()
         print(f"Dropped {n_dropped} epochs out of {len(epochs_ar)}")
-        p_dropped = n_dropped/len(epochs_ar) * 100
+        p_dropped = n_dropped / len(epochs_ar) * 100
         print(f"Percent dropped : {p_dropped}%")
+        epochs_out = epochs_ar
 
-    return eeg_clean, epochs # clean eeg & epochs
+    return eeg_clean, epochs_out
 
 def standard_preprocess_EEG(eeg_raw):
     return 0

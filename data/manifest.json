@@ -1,0 +1,39 @@
+{
+  "description": "Derived artifacts for the EEG dementia classification pipeline",
+  "zenodo_record_id": null,
+  "doi": null,
+  "version": "0.1.0",
+  "files": [
+    {
+      "path": "parquet_files/all_features.parquet",
+      "description": "Epoch-level extracted biomarker features",
+      "sha256": null
+    },
+    {
+      "path": "classifier_models/saved_models/xgboost_eeg_classifier.joblib",
+      "description": "Tuned XGBoost classifier",
+      "sha256": null
+    },
+    {
+      "path": "classifier_models/saved_models/eeg_mlp_classifier.joblib",
+      "description": "MLP classifier on tabular features",
+      "sha256": null
+    },
+    {
+      "path": "results/metrics.json",
+      "description": "Combined evaluation metrics",
+      "sha256": null
+    },
+    {
+      "path": "results/preprocessing_config.json",
+      "description": "Preprocessing parameter snapshot",
+      "sha256": null
+    },
+    {
+      "path": "results/subject_splits.json",
+      "description": "Train/test subject IDs",
+      "sha256": null
+    }
+  ],
+  "instructions": "After uploading to Zenodo, set zenodo_record_id and doi here, then run: python scripts/fetch_artifacts.py"
+}

@@ -1,38 +1,46 @@
 import argparse
-import joblib
+import json
+import os
+
 import numpy as np
-
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import classification_report, accuracy_score
 from category_encoders.target_encoder import TargetEncoder
-from xgboost import XGBClassifier, plot_importance
+from sklearn.metrics import accuracy_score, balanced_accuracy_score
+from sklearn.pipeline import Pipeline
 from skopt import BayesSearchCV
-from skopt.space import Real, Integer
+from skopt.space import Integer, Real
+from xgboost import XGBClassifier
 
-from util.io import load_features
-from config import TEST_SIZE, RANDOM_STATE
+from classifier_models.train_utils import (
+    classification_metrics,
+    prepare_training_data,
+    save_metrics,
+    save_model_artifact,
+)
+from config import RANDOM_STATE, RESULTS_DIR, TEST_SIZE
 
-MODEL_DIR = "classifier_models/saved_models"
-MODEL_FILE = "classifier_models/saved_models/xgboost_eeg_classifier.joblib"
+MODEL_DIR = os.path.join("classifier_models", "saved_models")
+MODEL_FILE = os.path.join(MODEL_DIR, "xgboost_eeg_classifier.joblib")
 
 
 def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=3):
-    features, labels = load_features()
-    x_train, x_test, y_train, y_test = train_test_split(
-        features,
-        labels,
-        test_size=test_size,
-        stratify=labels,
-        random_state=random_state,
+    x_train, x_test, y_train, y_test, label_encoder, split_ids = prepare_training_data(
+        test_size=test_size, random_state=random_state
     )
 
-    estimators = [
-        ("encoder", TargetEncoder()),
-        ("clf", XGBClassifier(random_state=random_state, use_label_encoder=False, eval_metric="logloss")),
-    ]
+    pipe = Pipeline(
+        steps=[
+            ("encoder", TargetEncoder()),
+            (
+                "clf",
+                XGBClassifier(
+                    random_state=random_state,
+                    eval_metric="mlogloss",
+                    objective="multi:softprob",
+                ),
+            ),
+        ]
+    )
 
-    pipe = Pipeline(steps=estimators)
     search_space = {
         "clf__max_depth": Integer(2, 8),
         "clf__learning_rate": Real(0.001, 1.0, prior="log-uniform"),
@@ -50,7 +58,7 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
         search_space,
         cv=cv,
         n_iter=n_iter,
-        scoring="roc_auc",
+        scoring="balanced_accuracy",
         random_state=random_state,
         n_jobs=1,
         verbose=0,
@@ -59,27 +67,48 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
     opt.fit(x_train, y_train)
 
     predictions = opt.predict(x_test)
-    test_accuracy = accuracy_score(y_test, predictions)
-    report = classification_report(y_test, predictions, zero_division=0)
+    y_test_enc = label_encoder.transform(y_test)
+    metrics = classification_metrics(y_test_enc, predictions, label_encoder)
+    metrics["cv_best_score"] = float(opt.best_score_)
+    metrics["model"] = "xgboost"
+    metrics["split_ids"] = split_ids
 
     print("XGBoost model training complete")
-    print(f"Test ROC AUC: {opt.score(x_test, y_test):.4f}")
-    print(f"Test accuracy: {test_accuracy:.4f}")
-    print("Classification report:\n")
-    print(report)
+    print(f"CV balanced accuracy: {opt.best_score_:.4f}")
+    print(f"Test accuracy: {metrics['accuracy']:.4f}")
+    print(f"Test balanced accuracy: {metrics['balanced_accuracy']:.4f}")
 
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    joblib.dump(opt.best_estimator_, MODEL_FILE)
-    print(f"Saved XGBoost model to {MODEL_FILE}")
+    feature_names = list(x_train.columns)
+    save_model_artifact(
+        opt.best_estimator_,
+        label_encoder,
+        feature_names,
+        split_ids,
+        "xgboost",
+        MODEL_FILE,
+    )
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    splits_path = os.path.join(RESULTS_DIR, "subject_splits.json")
+    with open(splits_path, "w", encoding="utf-8") as f:
+        json.dump(split_ids, f, indent=2)
 
     xgboost_step = opt.best_estimator_.named_steps["clf"]
-    print("Top 10 feature importances:")
     importances = xgboost_step.feature_importances_
     indices = np.argsort(importances)[::-1]
-    for i in indices[:10]:
-        print(f"Feature {i}: importance = {importances[i]:.4f}")
+    metrics["feature_importances"] = {
+        feature_names[i]: float(importances[i]) for i in indices[:10]
+    }
 
-    return opt, x_test, y_test
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    metrics_path = os.path.join(RESULTS_DIR, "metrics_xgboost.json")
+    save_metrics(metrics, metrics_path)
+
+    print("Top 10 feature importances:")
+    for name, imp in metrics["feature_importances"].items():
+        print(f"  {name}: {imp:.4f}")
+
+    return opt, metrics
 
 
 def parse_args():

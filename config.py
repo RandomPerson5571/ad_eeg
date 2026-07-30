@@ -10,8 +10,12 @@ CLEAN_DATA_DIR = os.path.join(BASE_DIR, "EEG_data", "EEG_clean_data")
 PARQUET_DIR = os.path.join(BASE_DIR, "parquet_files")
 
 
-# Datasets
-DATASETS = [2, 3]      # Active datasets
+# Datasets and their BIDS task names
+DATASETS = [2, 3]
+DATASET_TASKS = {
+    2: "eyesclosed",
+    3: "photomark",
+}
 
 # ----------------------
 # EEG PARAMETERS
@@ -33,6 +37,26 @@ MASTOID_CHANNELS = ["A1", "A2"]
 TARGET_CHANNELS = ["Fp1", "Fp2", "F7", "Cz"]
 
 PARQUET_COMBINED_FILE = os.path.join(PARQUET_DIR, "all_features.parquet")
+RESULTS_DIR = os.path.join(BASE_DIR, "results")
+
+# Feature columns used for classifier training
+FEATURE_COLUMNS = [
+    "lzc",
+    "mse_mean",
+    "rel_alpha",
+    "rel_beta",
+    "rel_theta",
+    "rel_delta",
+    "alpha_peak_freq",
+    "theta_alpha_ratio",
+    "theta_beta_ratio",
+    "slow_fast_ratio",
+    "theta_wpli",
+    "alpha_wpli",
+]
+
+# Zenodo record for derived artifacts (update after upload)
+ZENODO_RECORD_ID = None
 
 # Train/test split
 TEST_SIZE = 0.2

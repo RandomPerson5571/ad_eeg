@@ -1,0 +1,25 @@
+# Notebooks
+
+Interactive walkthroughs for the EEG dementia classification pipeline.
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+python -m ipykernel install --user --name=eeg-project
+jupyter lab
+```
+
+Raw EEG data must be present under `EEG_data/` (see `docs/DATA.md`) or fetch precomputed features from Zenodo via `scripts/fetch_artifacts.py`.
+
+## Notebooks
+
+| Notebook | Description |
+|----------|-------------|
+| `01_dataset_overview.ipynb` | Participant demographics and class balance |
+| `02_preprocessing_and_qc.ipynb` | Single-subject preprocessing and PSD QC |
+| `03_feature_extraction.ipynb` | Feature distributions and correlations |
+| `04_model_training.ipynb` | Subject-level split training |
+| `05_results_and_interpretation.ipynb` | Metrics, confusion matrices, limitations |
+
+Each notebook calls functions from `util/` and `classifier_models/` — logic is not duplicated in notebook cells.

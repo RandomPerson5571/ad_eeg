@@ -1,0 +1,14 @@
+{
+  "xgboost": {
+    "accuracy": 0.0,
+    "balanced_accuracy": 0.0,
+    "model": "xgboost",
+    "note": "Placeholder. Run scripts/run_pipeline.py --train xgboost to generate real metrics."
+  },
+  "mlp": {
+    "accuracy": 0.0,
+    "balanced_accuracy": 0.0,
+    "model": "mlp",
+    "note": "Placeholder. Run scripts/run_pipeline.py --train mlp to generate real metrics."
+  }
+}
