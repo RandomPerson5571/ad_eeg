@@ -126,6 +126,10 @@ def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, f
 
     merged_log = merge_ingest_logs(existing_log, log)
     write_ingest_log(merged_log)
+    if log or skipped:
+        from scripts.run_pipeline import save_preprocessing_config
+
+        save_preprocessing_config()
     ok_this_run = sum(1 for e in log if e.get("status") == "ok")
     total_ok = sum(1 for e in merged_log if e.get("status") == "ok")
     print(
