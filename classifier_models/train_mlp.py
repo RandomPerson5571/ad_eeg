@@ -10,13 +10,17 @@ from sklearn.preprocessing import StandardScaler
 from classifier_models.train_utils import (
     classification_metrics,
     prepare_training_data,
+    results_path_for_dataset,
     save_metrics,
     save_model_artifact,
 )
-from config import RANDOM_STATE, RESULTS_DIR, TEST_SIZE
+from config import DATASETS, RANDOM_STATE, RESULTS_DIR, TEST_SIZE
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "saved_models")
-MODEL_FILE = os.path.join(MODEL_DIR, "eeg_mlp_classifier.joblib")
+
+
+def model_file_for_dataset(dataset_id):
+    return os.path.join(MODEL_DIR, f"eeg_mlp_classifier_dataset{dataset_id}.joblib")
 
 
 def build_pipeline(hidden_layers=(128, 64), random_state=RANDOM_STATE):
@@ -43,9 +47,10 @@ def build_pipeline(hidden_layers=(128, 64), random_state=RANDOM_STATE):
     )
 
 
-def train_mlp(test_size=TEST_SIZE, hidden_layers=(128, 64), random_state=RANDOM_STATE, output_path=MODEL_FILE):
+def train_mlp(dataset_id, test_size=TEST_SIZE, hidden_layers=(128, 64), random_state=RANDOM_STATE, output_path=None):
+    output_path = output_path or model_file_for_dataset(dataset_id)
     x_train, x_test, y_train, y_test, label_encoder, split_ids = prepare_training_data(
-        test_size=test_size, random_state=random_state
+        dataset_id=dataset_id, test_size=test_size, random_state=random_state
     )
 
     pipeline = build_pipeline(hidden_layers=hidden_layers, random_state=random_state)
@@ -54,6 +59,7 @@ def train_mlp(test_size=TEST_SIZE, hidden_layers=(128, 64), random_state=RANDOM_
     y_pred = pipeline.predict(x_test)
     metrics = classification_metrics(y_test, y_pred, label_encoder)
     metrics["model"] = "mlp"
+    metrics["dataset_id"] = dataset_id
     metrics["split_ids"] = split_ids
 
     feature_names = list(x_train.columns)
@@ -70,26 +76,28 @@ def train_mlp(test_size=TEST_SIZE, hidden_layers=(128, 64), random_state=RANDOM_
     print(f"Balanced accuracy: {metrics['balanced_accuracy']:.4f}")
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    splits_path = os.path.join(RESULTS_DIR, "subject_splits.json")
+    splits_path = results_path_for_dataset("subject_splits.json", dataset_id)
     with open(splits_path, "w", encoding="utf-8") as f:
         json.dump(split_ids, f, indent=2)
 
-    save_metrics(metrics, os.path.join(RESULTS_DIR, "metrics_mlp.json"))
+    save_metrics(metrics, results_path_for_dataset("metrics_mlp.json", dataset_id))
 
     return pipeline, label_encoder, metrics
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an MLP classifier on extracted EEG features.")
+    parser.add_argument("--dataset", type=int, choices=DATASETS, required=True, help="Dataset ID to train on.")
     parser.add_argument("--test-size", type=float, default=TEST_SIZE, help="Fraction of data to reserve for testing.")
     parser.add_argument("--hidden-layers", type=int, nargs="+", default=[128, 64], help="Hidden layer sizes.")
-    parser.add_argument("--output", type=str, default=MODEL_FILE, help="Path to save the trained model.")
+    parser.add_argument("--output", type=str, help="Path to save the trained model.")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     train_mlp(
+        dataset_id=args.dataset,
         test_size=args.test_size,
         hidden_layers=tuple(args.hidden_layers),
         output_path=args.output,

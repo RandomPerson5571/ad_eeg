@@ -15,6 +15,7 @@ from config import (
     PARQUET_COMBINED_FILE,
     RAW_DATA_DIR,
     RESULTS_DIR,
+    parquet_path,
 )
 
 
@@ -64,30 +65,50 @@ def derivatives_eeg_path(dataset_id, subject_num, task=None):
 
 
 def save_as_parquet(df, participant_id, dataset_id, label):
-    combined_parquet_path = PARQUET_COMBINED_FILE
-    df = df.copy()
+    dataset_parquet_path = parquet_path(dataset_id)
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame(df)
+    else:
+        df = df.copy()
     df["participant_id"] = participant_id
     df["dataset_id"] = dataset_id
     df["label"] = label
 
-    os.makedirs(os.path.dirname(combined_parquet_path), exist_ok=True)
+    os.makedirs(os.path.dirname(dataset_parquet_path), exist_ok=True)
 
-    if os.path.exists(combined_parquet_path):
-        existing = pd.read_parquet(combined_parquet_path)
+    if os.path.exists(dataset_parquet_path):
+        existing = pd.read_parquet(dataset_parquet_path)
         combined = pd.concat([existing, df], ignore_index=True)
-        combined.to_parquet(combined_parquet_path, engine="pyarrow")
-        print(f"Combined dataset saved to {combined_parquet_path}")
+        combined.to_parquet(dataset_parquet_path, engine="pyarrow")
+        print(f"Dataset {dataset_id} features saved to {dataset_parquet_path}")
     else:
-        df.to_parquet(combined_parquet_path, engine="pyarrow")
-        print(f"Initialized new dataset and saved to {combined_parquet_path}")
+        df.to_parquet(dataset_parquet_path, engine="pyarrow")
+        print(f"Initialized dataset {dataset_id} features at {dataset_parquet_path}")
 
 
-def load_features_df():
-    return pd.read_parquet(PARQUET_COMBINED_FILE)
+def load_features_df(dataset_id=None):
+    if dataset_id is not None:
+        path = parquet_path(dataset_id)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"{path} not found. Run ingest for dataset {dataset_id} first."
+            )
+        return pd.read_parquet(path)
+
+    if os.path.exists(PARQUET_COMBINED_FILE):
+        return pd.read_parquet(PARQUET_COMBINED_FILE)
+
+    available = [d for d in DATASETS if os.path.exists(parquet_path(d))]
+    if len(available) == 1:
+        return pd.read_parquet(parquet_path(available[0]))
+
+    raise FileNotFoundError(
+        "No feature parquet found. Pass dataset_id or run ingest_features.py first."
+    )
 
 
-def load_features(include_metadata=False):
-    df = load_features_df()
+def load_features(include_metadata=False, dataset_id=None):
+    df = load_features_df(dataset_id=dataset_id)
     features = df[FEATURE_COLUMNS]
     labels = df["label"]
 

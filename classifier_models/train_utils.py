@@ -8,8 +8,18 @@ import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import LabelEncoder
 
-from config import FEATURE_COLUMNS, RANDOM_STATE, RESULTS_DIR, TEST_SIZE
+from config import DATASETS, FEATURE_COLUMNS, RANDOM_STATE, RESULTS_DIR, TEST_SIZE
 from util.io import load_features_df
+
+
+def validate_feature_schema(df):
+    missing = [col for col in FEATURE_COLUMNS if col not in df.columns]
+    if not missing:
+        return
+
+    stale = {"lzc", "mse_mean"} & set(df.columns)
+    hint = " Re-ingest required to refresh feature columns." if stale else ""
+    raise ValueError(f"Feature parquet missing columns: {missing}.{hint}")
 
 
 def subject_level_split(
@@ -48,15 +58,25 @@ def subject_level_split(
     return x_train, x_test, y_train, y_test, split_ids
 
 
-def prepare_training_data(test_size=TEST_SIZE, random_state=RANDOM_STATE):
-    df = load_features_df()
+def prepare_training_data(dataset_id, test_size=TEST_SIZE, random_state=RANDOM_STATE):
+    if dataset_id not in DATASETS:
+        raise ValueError(f"dataset_id must be one of {DATASETS}, got {dataset_id}")
+
+    df = load_features_df(dataset_id=dataset_id)
+    validate_feature_schema(df)
     x_train, x_test, y_train, y_test, split_ids = subject_level_split(
         df, test_size=test_size, random_state=random_state
     )
+    split_ids["dataset_id"] = dataset_id
     label_encoder = LabelEncoder()
     y_train_enc = label_encoder.fit_transform(y_train)
     y_test_enc = label_encoder.transform(y_test)
     return x_train, x_test, y_train_enc, y_test_enc, label_encoder, split_ids
+
+
+def results_path_for_dataset(filename, dataset_id):
+    stem, ext = os.path.splitext(filename)
+    return os.path.join(RESULTS_DIR, f"{stem}_dataset{dataset_id}{ext}")
 
 
 def save_metrics(metrics: dict[str, Any], path=None):

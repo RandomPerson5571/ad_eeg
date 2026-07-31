@@ -1,6 +1,33 @@
 import numpy as np
 import math
 
+
+def normalize_signal(signal, method="zscore"):
+    signal = np.asarray(signal, dtype=np.float64)
+    if method == "zscore":
+        std = np.std(signal)
+        if std < 1e-15:
+            return signal - np.mean(signal)
+        return (signal - np.mean(signal)) / std
+    raise ValueError(f"Unknown normalization method: {method}")
+
+
+def compute_regional_complexity(epoch, ch_names, region_channels, region_name="posterior"):
+    ch_to_idx = {ch: i for i, ch in enumerate(ch_names)}
+    indices = [ch_to_idx[ch] for ch in region_channels if ch in ch_to_idx]
+    if not indices:
+        return {
+            f"lzc_{region_name}": np.nan,
+            f"mse_{region_name}": np.nan,
+        }
+
+    regional_ts = normalize_signal(epoch[indices, :].mean(axis=0))
+    return {
+        f"lzc_{region_name}": lempel_ziv_complexity(regional_ts),
+        f"mse_{region_name}": multiscale_entropy(regional_ts),
+    }
+
+
 def binarize(signal):
     median = np.median(signal)
     binary_seq = (signal > median).astype(np.uint8)

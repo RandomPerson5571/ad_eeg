@@ -1,8 +1,8 @@
 import mne
 
 import numpy as np
-from biomarkers import lempel_ziv_complexity, multiscale_entropy, compute_band_power, compute_connectivity
-from config import SAMPLING_RATE
+from biomarkers import compute_band_power, compute_connectivity, compute_regional_complexity
+from config import REGIONAL_CHANNELS, SAMPLING_RATE
 
 
 def connectivity_for_epochs(epochs, ch_names):
@@ -28,27 +28,21 @@ def extract_eeg_features(data, ch_names=None, verbose=False, subject_connectivit
 
         epoch_mne = mne.EpochsArray(epoch[np.newaxis, :, :], info=epochs_info)
 
-        epoch_mean_ts = epoch.mean(axis=0)
+        complexity_features = {}
+        for region_name, region_channels in REGIONAL_CHANNELS.items():
+            complexity_features.update(
+                compute_regional_complexity(epoch, ch_names, region_channels, region_name=region_name)
+            )
 
-        lzc = lempel_ziv_complexity(epoch_mean_ts)
-
-        mse_vector = multiscale_entropy(epoch_mean_ts)
-        mse_mean = np.nanmean(mse_vector)
-            
         band_power_features = compute_band_power(epoch_mne, target_channels=None)
 
         connectivity_features = subject_connectivity if subject_connectivity is not None else compute_connectivity(epoch_mne)
-        
-        complexity_features = {
-            "lzc": lzc,
-            "mse_mean": mse_mean
-        }
-            
+
         epoch_features = {
-            "epoch_id" : epoch_id,
+            "epoch_id": epoch_id,
             **band_power_features,
             **connectivity_features,
-            **complexity_features
+            **complexity_features,
         }
 
         merged_features.append(epoch_features)

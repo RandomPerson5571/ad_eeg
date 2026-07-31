@@ -20,14 +20,19 @@ Python 3.10+ recommended.
 # 1. Validate data layout
 python scripts/download_data.py
 
-# 2. Extract features (all subjects, both datasets)
-python scripts/ingest_features.py --all-datasets --all
+# 2. Extract features (per dataset)
+python scripts/ingest_features.py --dataset 2 --all
+python scripts/ingest_features.py --dataset 3 --all
 
-# 3. Train models with subject-level splits
-python scripts/run_pipeline.py --train xgboost,mlp
+# Quick smoke test (minimal preprocessing — bandpass + epoch + AR only):
+python scripts/ingest_features.py --dataset 2 --subject 1 --fast
 
-# Or run everything:
-python scripts/run_pipeline.py --ingest --all-datasets --train xgboost,mlp
+# 3. Train models with subject-level splits (one dataset at a time)
+python scripts/run_pipeline.py --train xgboost,mlp --dataset 2
+
+# Or ingest and train for one dataset:
+python scripts/ingest_features.py --dataset 2 --all
+python scripts/run_pipeline.py --train xgboost,mlp --dataset 2
 ```
 
 ## Reproduction from Zenodo artifacts
@@ -36,8 +41,8 @@ If you only need to retrain or evaluate without re-processing raw EEG:
 
 ```bash
 python scripts/fetch_artifacts.py --record-id YOUR_ZENODO_RECORD_ID
-python classifier_models/train_XGBoost.py
-python classifier_models/train_mlp.py
+python classifier_models/train_XGBoost.py --dataset 2
+python classifier_models/train_mlp.py --dataset 2
 ```
 
 ## Fixed random seeds
@@ -53,13 +58,15 @@ python classifier_models/train_mlp.py
 
 | Path | Contents |
 |------|----------|
-| `parquet_files/all_features.parquet` | Feature store |
+| `parquet_files/features_dataset{N}.parquet` | Per-dataset feature store |
+| `parquet_files/all_features.parquet` | Legacy combined feature store |
 | `results/ingest_log.json` | Per-subject ingest status |
 | `results/preprocessing_config.json` | Config snapshot |
-| `results/metrics.json` | Combined model metrics |
-| `results/metrics_xgboost.json` | XGBoost-only metrics |
-| `results/metrics_mlp.json` | MLP-only metrics |
-| `classifier_models/saved_models/*.joblib` | Model bundles |
+| `results/metrics_dataset{N}.json` | Combined model metrics per dataset |
+| `results/metrics_xgboost_dataset{N}.json` | XGBoost-only metrics |
+| `results/metrics_mlp_dataset{N}.json` | MLP-only metrics |
+| `results/subject_splits_dataset{N}.json` | Train/test subject IDs per dataset |
+| `classifier_models/saved_models/*_dataset{N}.joblib` | Model bundles per dataset |
 
 ## Zenodo upload checklist
 

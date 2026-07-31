@@ -1,13 +1,18 @@
 import numpy as np
 
+from config import N_FFT
+
+
 def compute_band_power(epoch_mne, target_channels):
     eps = 1e-12
-    
+    n_times = epoch_mne.get_data().shape[-1]
+    n_fft = min(N_FFT, n_times)
+
     psd, freqs = epoch_mne.compute_psd(
     method="welch",
     fmin=1,
     fmax=40,
-    n_fft=256,
+    n_fft=n_fft,
     picks=target_channels,
     verbose=False
     ).get_data(return_freqs=True)
@@ -25,8 +30,8 @@ def compute_band_power(epoch_mne, target_channels):
     alpha_mean = alpha_power.mean()
     beta_mean = beta_power.mean()
 
-    theta_alpha_ratio = (theta_mean / (alpha_power + eps))
-    theta_beta_ratio = (theta_mean / (beta_power + eps))
+    theta_alpha_ratio = theta_mean / (alpha_mean + eps)
+    theta_beta_ratio = theta_mean / (beta_mean + eps)
     slow_fast_ratio = (theta_mean + delta_mean) / (alpha_mean + beta_mean + eps)
 
     total_mean = delta_mean + theta_mean + alpha_mean + beta_mean

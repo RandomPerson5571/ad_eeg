@@ -2,7 +2,6 @@
 """Batch EEG ingestion: preprocess raw .set files and extract features to parquet."""
 
 import argparse
-import json
 import sys
 import time
 import traceback
@@ -15,10 +14,9 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from config import DATASETS, SAMPLING_RATE  # noqa: E402
+from config import DATASETS, FAST_PREPROCESS_DEFAULTS, PREPROCESS_DEFAULTS, SAMPLING_RATE  # noqa: E402
 from util.extract_features import connectivity_for_epochs, extract_eeg_features  # noqa: E402
 from util.io import (  # noqa: E402
-    get_participant_data,
     list_subjects,
     raw_eeg_path,
     read_eeg_data,
@@ -29,7 +27,7 @@ from util.io import (  # noqa: E402
 from util.preprocessing import preprocess_EEG  # noqa: E402
 
 
-def process_subject(dataset_id, subject_num, participant_df, save_clean=False, qc=False):
+def process_subject(dataset_id, subject_num, participant_df, save_clean=False, qc=False, fast=False):
     row = participant_df.iloc[subject_num - 1]
     participant_id = row["participant_id"]
     label = row["Group"]
@@ -38,19 +36,13 @@ def process_subject(dataset_id, subject_num, participant_df, save_clean=False, q
     if not Path(path).exists():
         raise FileNotFoundError(f"Missing EEG file: {path}")
 
+    preprocess_kwargs = FAST_PREPROCESS_DEFAULTS if fast else PREPROCESS_DEFAULTS
+
     t0 = time.perf_counter()
     eeg_raw = read_eeg_data(path, sfreq=SAMPLING_RATE)
     ch_names = eeg_raw.ch_names
 
-    clean_eeg, epochs = preprocess_EEG(
-        eeg_raw,
-        freq_filter=True,
-        notch_filter=False,
-        asr=False,
-        referencing=False,
-        AR=True,
-        fle=True,
-    )
+    clean_eeg, epochs = preprocess_EEG(eeg_raw, **preprocess_kwargs)
 
     if save_clean:
         save_clean_eeg(clean_eeg, dataset_id, subject_num)
@@ -76,11 +68,12 @@ def process_subject(dataset_id, subject_num, participant_df, save_clean=False, q
         "label": label,
         "n_epochs": len(all_epoch_features),
         "elapsed_seconds": round(elapsed, 2),
+        "preprocessing_mode": "fast" if fast else "full",
         "status": "ok",
     }
 
 
-def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False):
+def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, fast=False):
     log = []
     participant_tables = {d: list_subjects(d) for d in datasets}
 
@@ -98,6 +91,7 @@ def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False):
                     participant_tables[dataset_id],
                     save_clean=save_clean,
                     qc=qc,
+                    fast=fast,
                 )
                 log.append(entry)
                 print(f"  OK: {entry['n_epochs']} epochs in {entry['elapsed_seconds']}s")
@@ -128,6 +122,11 @@ def parse_args():
     parser.add_argument("--limit", type=int, help="Max subjects per dataset (for testing).")
     parser.add_argument("--save-clean", action="store_true", help="Save cleaned EEG to EEG_clean_data/.")
     parser.add_argument("--qc", action="store_true", help="Save PSD QC plots to results/.")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Minimal preprocessing (bandpass + epoch + AR only; skips notch, ASR, ICA).",
+    )
     return parser.parse_args()
 
 
@@ -154,4 +153,5 @@ if __name__ == "__main__":
         limit=args.limit,
         save_clean=args.save_clean,
         qc=args.qc,
+        fast=args.fast,
     )

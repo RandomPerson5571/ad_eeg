@@ -25,6 +25,36 @@ SAMPLING_RATE = 500   # Hz
 # Filtering
 NOTCH_FREQ = [50, 100, 150]     # Set to None if not needed (e.g., 50.0 for EU)
 
+# Preprocessing (production defaults — aligned with Miltiadous et al. ds004504)
+ASR_CUTOFF = 17
+ICA_RANDOM_STATE = 97
+ICA_N_COMPONENTS = 0.95
+BAD_CHANNEL_FLAT_STD = 1e-15
+BAD_CHANNEL_NOISY_Z = 5.0
+
+PREPROCESS_DEFAULTS = {
+    "freq_filter": True,
+    "notch_filter": True,
+    "bad_channels": True,
+    "referencing": True,
+    "asr": True,
+    "asr_cutoff": ASR_CUTOFF,
+    "run_ica": True,
+    "AR": True,
+    "fle": True,
+}
+
+FAST_PREPROCESS_DEFAULTS = {
+    "freq_filter": True,
+    "notch_filter": False,
+    "bad_channels": False,
+    "referencing": False,
+    "asr": False,
+    "run_ica": False,
+    "AR": True,
+    "fle": True,
+}
+
 # Epoching
 EPOCH_LENGTH = 4.0    # seconds
 EPOCH_OVERLAP = 2.0   # seconds
@@ -36,13 +66,25 @@ ALL_CHANNELS = ["Fp1", "Fp2", "F7", "F3", "Fz", "F4", "F8", "T3", "C3", "Cz", "C
 MASTOID_CHANNELS = ["A1", "A2"]
 TARGET_CHANNELS = ["Fp1", "Fp2", "F7", "Cz"]
 
+# Welch PSD window (frequency resolution ≈ SAMPLING_RATE / N_FFT Hz)
+N_FFT = 512
+
+# Regional channel groups for complexity metrics
+REGIONAL_CHANNELS = {
+    "posterior": ["P3", "Pz", "P4", "O1", "O2"],
+}
+
+def parquet_path(dataset_id):
+    return os.path.join(PARQUET_DIR, f"features_dataset{dataset_id}.parquet")
+
+
 PARQUET_COMBINED_FILE = os.path.join(PARQUET_DIR, "all_features.parquet")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 
 # Feature columns used for classifier training
 FEATURE_COLUMNS = [
-    "lzc",
-    "mse_mean",
+    "lzc_posterior",
+    "mse_posterior",
     "rel_alpha",
     "rel_beta",
     "rel_theta",

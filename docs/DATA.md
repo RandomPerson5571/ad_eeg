@@ -52,7 +52,9 @@ Large derived files are hosted separately on Zenodo (not in git):
 
 | File | Description |
 |------|-------------|
-| `parquet_files/all_features.parquet` | Epoch-level biomarker features |
+| `parquet_files/features_dataset2.parquet` | Epoch-level biomarkers (eyes-closed resting) |
+| `parquet_files/features_dataset3.parquet` | Epoch-level biomarkers (photomark task) |
+| `parquet_files/all_features.parquet` | Legacy combined file (deprecated) |
 | `classifier_models/saved_models/*.joblib` | Trained classifiers |
 | `results/metrics.json` | Evaluation metrics |
 | `results/preprocessing_config.json` | Parameter snapshot |

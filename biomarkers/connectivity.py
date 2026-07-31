@@ -1,27 +1,26 @@
-import mne
 from mne_connectivity import spectral_connectivity_epochs
 import numpy as np
 
-def compute_connectivity(epochs, fmin=4, fmax=12):
+
+def _band_wpli(epochs, fmin, fmax):
     con = spectral_connectivity_epochs(
-    data=epochs,             
-    method='wpli',
-    mode='multitaper',
-    sfreq=epochs.info['sfreq'],
-    fmin=fmin,
-    fmax=fmax,
-    faverage=False,
-    verbose=False
+        data=epochs,
+        method="wpli",
+        mode="multitaper",
+        sfreq=epochs.info["sfreq"],
+        fmin=fmin,
+        fmax=fmax,
+        faverage=True,
+        verbose=False,
     )
+    return float(np.mean(con.get_data(output="dense")))
 
-    conn_data = con.get_data(output='dense')
 
-    theta_wpli = np.mean(conn_data[..., 0])
-    alpha_wpli = np.mean(conn_data[..., 1])
+def compute_connectivity(epochs):
+    theta_wpli = _band_wpli(epochs, 4, 8)
+    alpha_wpli = _band_wpli(epochs, 8, 13)
 
-    connectivity_features = {
+    return {
         "theta_wpli": theta_wpli,
-        "alpha_wpli": alpha_wpli
+        "alpha_wpli": alpha_wpli,
     }
-
-    return connectivity_features

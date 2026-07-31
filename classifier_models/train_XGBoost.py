@@ -13,18 +13,22 @@ from xgboost import XGBClassifier
 from classifier_models.train_utils import (
     classification_metrics,
     prepare_training_data,
+    results_path_for_dataset,
     save_metrics,
     save_model_artifact,
 )
-from config import RANDOM_STATE, RESULTS_DIR, TEST_SIZE
+from config import DATASETS, RANDOM_STATE, RESULTS_DIR, TEST_SIZE
 
 MODEL_DIR = os.path.join("classifier_models", "saved_models")
-MODEL_FILE = os.path.join(MODEL_DIR, "xgboost_eeg_classifier.joblib")
 
 
-def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=3):
+def model_file_for_dataset(dataset_id):
+    return os.path.join(MODEL_DIR, f"xgboost_eeg_classifier_dataset{dataset_id}.joblib")
+
+
+def train_xgboost(dataset_id, test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=3):
     x_train, x_test, y_train, y_test, label_encoder, split_ids = prepare_training_data(
-        test_size=test_size, random_state=random_state
+        dataset_id=dataset_id, test_size=test_size, random_state=random_state
     )
 
     pipe = Pipeline(
@@ -71,6 +75,7 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
     metrics = classification_metrics(y_test_enc, predictions, label_encoder)
     metrics["cv_best_score"] = float(opt.best_score_)
     metrics["model"] = "xgboost"
+    metrics["dataset_id"] = dataset_id
     metrics["split_ids"] = split_ids
 
     print("XGBoost model training complete")
@@ -79,17 +84,18 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
     print(f"Test balanced accuracy: {metrics['balanced_accuracy']:.4f}")
 
     feature_names = list(x_train.columns)
+    model_file = model_file_for_dataset(dataset_id)
     save_model_artifact(
         opt.best_estimator_,
         label_encoder,
         feature_names,
         split_ids,
         "xgboost",
-        MODEL_FILE,
+        model_file,
     )
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    splits_path = os.path.join(RESULTS_DIR, "subject_splits.json")
+    splits_path = results_path_for_dataset("subject_splits.json", dataset_id)
     with open(splits_path, "w", encoding="utf-8") as f:
         json.dump(split_ids, f, indent=2)
 
@@ -101,7 +107,7 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
     }
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    metrics_path = os.path.join(RESULTS_DIR, "metrics_xgboost.json")
+    metrics_path = results_path_for_dataset("metrics_xgboost.json", dataset_id)
     save_metrics(metrics, metrics_path)
 
     print("Top 10 feature importances:")
@@ -113,6 +119,7 @@ def train_xgboost(test_size=TEST_SIZE, random_state=RANDOM_STATE, n_iter=10, cv=
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the EEG XGBoost classifier using extracted features.")
+    parser.add_argument("--dataset", type=int, choices=DATASETS, required=True, help="Dataset ID to train on.")
     parser.add_argument("--test-size", type=float, default=TEST_SIZE, help="Test set fraction.")
     parser.add_argument("--n-iter", type=int, default=10, help="BayesSearchCV iterations.")
     parser.add_argument("--cv", type=int, default=3, help="Cross-validation folds.")
@@ -121,4 +128,4 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    train_xgboost(test_size=args.test_size, n_iter=args.n_iter, cv=args.cv)
+    train_xgboost(dataset_id=args.dataset, test_size=args.test_size, n_iter=args.n_iter, cv=args.cv)
