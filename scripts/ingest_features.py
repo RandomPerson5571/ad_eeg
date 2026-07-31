@@ -18,8 +18,10 @@ from config import DATASETS, FAST_PREPROCESS_DEFAULTS, PREPROCESS_DEFAULTS, SAMP
 from util.extract_features import connectivity_for_epochs, extract_eeg_features  # noqa: E402
 from util.io import (  # noqa: E402
     list_subjects,
+    merge_ingest_logs,
     raw_eeg_path,
     read_eeg_data,
+    read_ingest_log,
     save_as_parquet,
     save_clean_eeg,
     write_ingest_log,
@@ -73,8 +75,15 @@ def process_subject(dataset_id, subject_num, participant_df, save_clean=False, q
     }
 
 
-def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, fast=False):
+def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, fast=False, skip_existing=True):
+    existing_log = read_ingest_log()
+    done = {
+        (e["dataset_id"], e["subject_num"])
+        for e in existing_log
+        if e.get("status") == "ok"
+    }
     log = []
+    skipped = 0
     participant_tables = {d: list_subjects(d) for d in datasets}
 
     for dataset_id in datasets:
@@ -83,7 +92,15 @@ def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, f
             nums = nums[:limit]
 
         for subject_num in nums:
-            print(f"Processing dataset {dataset_id} subject {subject_num:03d}")
+            if skip_existing and (dataset_id, subject_num) in done:
+                skipped += 1
+                print(
+                    f"SKIP: dataset {dataset_id} subject {subject_num:03d} (already ingested)",
+                    flush=True,
+                )
+                continue
+
+            print(f"Processing dataset {dataset_id} subject {subject_num:03d}", flush=True)
             try:
                 entry = process_subject(
                     dataset_id,
@@ -94,7 +111,7 @@ def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, f
                     fast=fast,
                 )
                 log.append(entry)
-                print(f"  OK: {entry['n_epochs']} epochs in {entry['elapsed_seconds']}s")
+                print(f"  OK: {entry['n_epochs']} epochs in {entry['elapsed_seconds']}s", flush=True)
             except Exception as exc:
                 log.append(
                     {
@@ -105,12 +122,17 @@ def run_ingest(datasets, subject_nums, limit=None, save_clean=False, qc=False, f
                         "traceback": traceback.format_exc(),
                     }
                 )
-                print(f"  ERROR: {exc}")
+                print(f"  ERROR: {exc}", flush=True)
 
-    write_ingest_log(log)
-    ok = sum(1 for e in log if e.get("status") == "ok")
-    print(f"Ingest complete: {ok}/{len(log)} subjects succeeded")
-    return log
+    merged_log = merge_ingest_logs(existing_log, log)
+    write_ingest_log(merged_log)
+    ok_this_run = sum(1 for e in log if e.get("status") == "ok")
+    total_ok = sum(1 for e in merged_log if e.get("status") == "ok")
+    print(
+        f"Ingest complete: {ok_this_run} processed, {skipped} skipped, {total_ok} total OK",
+        flush=True,
+    )
+    return merged_log
 
 
 def parse_args():
@@ -126,6 +148,18 @@ def parse_args():
         "--fast",
         action="store_true",
         help="Minimal preprocessing (bandpass + epoch + AR only; skips notch, ASR, ICA).",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip subjects already marked OK in results/ingest_log.json (default: on).",
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        action="store_false",
+        dest="skip_existing",
+        help="Re-process all subjects (replaces parquet rows per participant_id).",
     )
     return parser.parse_args()
 
@@ -154,4 +188,5 @@ if __name__ == "__main__":
         save_clean=args.save_clean,
         qc=args.qc,
         fast=args.fast,
+        skip_existing=args.skip_existing,
     )

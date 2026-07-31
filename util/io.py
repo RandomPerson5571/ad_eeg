@@ -78,6 +78,7 @@ def save_as_parquet(df, participant_id, dataset_id, label):
 
     if os.path.exists(dataset_parquet_path):
         existing = pd.read_parquet(dataset_parquet_path)
+        existing = existing[existing["participant_id"] != participant_id]
         combined = pd.concat([existing, df], ignore_index=True)
         combined.to_parquet(dataset_parquet_path, engine="pyarrow")
         print(f"Dataset {dataset_id} features saved to {dataset_parquet_path}")
@@ -149,6 +150,21 @@ def list_subjects(dataset_id):
         dataset_id,
     )
     return participants
+
+
+def read_ingest_log(path=None):
+    path = path or os.path.join(RESULTS_DIR, "ingest_log.json")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def merge_ingest_logs(existing, new_entries):
+    by_key = {(e["dataset_id"], e["subject_num"]): e for e in existing}
+    for entry in new_entries:
+        by_key[(entry["dataset_id"], entry["subject_num"])] = entry
+    return sorted(by_key.values(), key=lambda e: (e["dataset_id"], e.get("subject_num", 0)))
 
 
 def write_ingest_log(entries, path=None):
