@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import DATASETS, RAW_DATA_DIR
+from config import DATASETS, DATASET_TASKS, RAW_DATA_DIR
 
 CITATION = """
 Dataset: Miltiadous et al. (2023)
@@ -18,11 +18,12 @@ Place downloaded data under EEG_data/ with this layout per dataset:
 
   EEG_data/dataset2/
     participants.tsv
-    sub-001/eeg/sub-001_task-eyesclosed_eeg.set
+    sub-001/eeg/sub-001_task-<task>_eeg.set
     sub-002/eeg/...
     derivatives/sub-001/eeg/...  (optional, for reference preprocessing)
 
-Repeat for dataset3 if using both datasets (DATASETS in config.py).
+Task names per dataset are in config.py (DATASET_TASKS).
+Repeat for each dataset listed in DATASETS.
 """
 
 
@@ -34,9 +35,10 @@ def validate_dataset(dataset_id):
     if not participants.exists():
         issues.append(f"Missing {participants}")
 
-    sub_dirs = sorted(root.glob("sub-*/eeg/*_task-eyesclosed_eeg.set"))
+    task = DATASET_TASKS.get(dataset_id, "eyesclosed")
+    sub_dirs = sorted(root.glob(f"sub-*/eeg/*_task-{task}_eeg.set"))
     if not sub_dirs:
-        issues.append(f"No .set files found under {root}/sub-*/eeg/")
+        issues.append(f"No .set files found under {root}/sub-*/eeg/ (task: {task})")
 
     return issues, len(sub_dirs)
 
