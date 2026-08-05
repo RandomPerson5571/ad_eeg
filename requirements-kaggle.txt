@@ -1,0 +1,20 @@
+# EEG
+mne==1.10.1
+mne-connectivity==0.7.0
+autoreject==0.4.3
+asrpy==0.0.8
+
+# Machine learning
+scikit-learn==1.7.2
+xgboost==3.1.1
+scikit-optimize==0.10.2
+category-encoders==2.9.0
+
+# Utilities
+antropy
+joblib
+pyyaml
+pyarrow
+
+# Testing
+pytest
