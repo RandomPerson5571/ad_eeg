@@ -20,8 +20,15 @@ from eeg.preprocessing import preprocess_subject
 from eeg.runner import run_parallel, summarize_batch, update_experiment_metadata
 
 
-def _worker(args_tuple):
-    raw_path, dataset_name, experiment, participant_id, config, config_fp, force = args_tuple
+def _worker(
+    raw_path,
+    dataset_name,
+    experiment,
+    participant_id,
+    config,
+    config_fp,
+    force,
+):
     return preprocess_subject(
         raw_path=Path(raw_path),
         participant_id=participant_id,

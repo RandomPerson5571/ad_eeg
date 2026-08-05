@@ -40,8 +40,16 @@ def _subject_done(dataset_name, experiment, participant_id, epochs_path, config_
     return log.get("epochs_sha256") == epochs_hash and log.get("status") == "ok"
 
 
-def _extract_worker(args_tuple):
-    dataset_name, dataset_id, experiment, participant_id, label, config, config_fp, force = args_tuple
+def _extract_worker(
+    dataset_name,
+    dataset_id,
+    experiment,
+    participant_id,
+    label,
+    config,
+    config_fp,
+    force,
+):
     epochs_path = checkpoint_path(dataset_name, experiment, participant_id, "epochs")
 
     if not force and _subject_done(dataset_name, experiment, participant_id, epochs_path, config_fp):
