@@ -6,12 +6,12 @@ This pipeline ingests pre-recorded EEG (no live acquisition), preprocesses signa
 
 ## Datasets
 
-| Dataset | Task | Paradigm |
-|---------|------|----------|
-| 2 | `eyesclosed` | Eyes-closed resting state |
-| 3 | `photomark` | Eyes-open photo stimulation |
+| Dataset | Alias | Task | Paradigm |
+|---------|-------|------|----------|
+| eyesclosed | `2` | eyesclosed | Eyes-closed resting state |
+| photomark | `3` | photomark | Eyes-open photo stimulation |
 
-Each dataset is ingested and trained **separately** to avoid mixing paradigms. Feature files are stored per dataset (`parquet_files/features_dataset{N}.parquet`).
+Each dataset is processed and trained **separately** via `--dataset eyesclosed` or `--dataset photomark`.
 
 ## Label encoding
 
@@ -21,24 +21,26 @@ Each dataset is ingested and trained **separately** to avoid mixing paradigms. F
 | F | Frontotemporal dementia |
 | C | Healthy control |
 
-## Preprocessing protocol
+## Preprocessing protocol (staged checkpoints)
 
-Applied to raw `sub-*/eeg/*_task-{task}_eeg.set` files (not publisher derivatives). Production defaults are in `config.PREPROCESS_DEFAULTS`:
+Experiment configs in `experiments/` define preprocessing. Default `baseline`:
 
-1. Band-pass filter: 0.5–40 Hz (FIR, zero-phase)
-2. Notch filter: 50, 100, 150 Hz (line noise)
-3. Bad-channel detection: flat/noisy channels interpolated
-4. Average reference
-5. ASR artifact removal (`ASR_CUTOFF=17`, aligned with Miltiadous et al.)
-6. ICA: fit on 1 Hz high-pass copy; EOG components removed via Fp1/Fp2
-7. Fixed-length epoching: 4 s windows, 2 s overlap
-8. AutoReject: interpolate bad epochs (`n_interpolate=[1,2,3,4]`, `random_state=11`)
+1. Load raw → `sub-NNN_raw.fif`
+2. Band-pass 0.5–40 Hz + notch → `sub-NNN_filtered.fif`
+3. ICA (if enabled) → `sub-NNN_ica.fif`
+4. Bad channels + average ref + ASR → `sub-NNN_clean.fif`
+5. Epoching (4 s, 2 s overlap) + AutoReject → `sub-NNN_epo.fif`
 
-For quick dev runs, use `python scripts/ingest_features.py --fast` to skip steps 2–6 (bandpass + epoch + AR only).
+Stages are resumable: each subject log stores `raw_sha256` and `config_fingerprint`.
 
-Connectivity (wPLI) is computed once per subject across all epochs and attached to each epoch row.
+For quick dev: `--experiment fast` (bandpass + epoch + AR only).
 
-Parameters are defined in `config.py` and snapshotted to `results/preprocessing_config.json` after each pipeline run.
+```bash
+python scripts/preprocess_dataset.py --dataset eyesclosed --experiment baseline
+python scripts/extract_features.py --dataset eyesclosed --experiment baseline
+```
+
+Parameters are snapshotted in `data/preprocessed/{dataset}/{experiment}/metadata.json`.
 
 ## Feature extraction
 
@@ -53,26 +55,30 @@ Per epoch, the following features are computed:
 | theta_alpha_ratio, theta_beta_ratio, slow_fast_ratio | Spectral ratios |
 | theta_wpli, alpha_wpli | Weighted phase lag index connectivity (theta 4–8 Hz, alpha 8–13 Hz) |
 
-Implementation: `util/extract_features.py`, `biomarkers/`.
+Implementation: `eeg/features.py`, `biomarkers/`.
 
 ## Train/test split
 
-**Subject-level split** via `GroupShuffleSplit` in `classifier_models/train_utils.py`:
+**Subject-level split** via `GroupShuffleSplit` in `eeg/training.py`:
 
 - All epochs from one participant stay in the same fold
-- Default test fraction: 20% (`TEST_SIZE=0.2`, `RANDOM_STATE=42`)
-- Split subject IDs saved per dataset in `results/subject_splits_dataset{N}.json`
+- Default: `configs/training.yaml` (`test_size: 0.2`, `random_state: 42`)
+- Split IDs saved in `data/results/{dataset}/{experiment}/subject_splits.json`
 
-This avoids epoch-level leakage where multiple epochs from the same recording appear in both train and test.
+```bash
+python scripts/train_model.py --dataset eyesclosed --experiment baseline --model xgboost,mlp
+```
 
-Training requires an explicit dataset: `python scripts/run_pipeline.py --train xgboost,mlp --dataset 2`
+Training produces ROC curves and confusion matrices inline (no separate evaluate stage).
 
 ## Models
 
 | Script | Model | Notes |
 |--------|-------|-------|
-| `classifier_models/train_XGBoost.py` | XGBoost + TargetEncoder | Bayesian hyperparameter search, balanced accuracy scoring |
-| `classifier_models/train_mlp.py` | MLP (128, 64) + StandardScaler | Early stopping, feature-based (not raw-waveform CNN) |
+| `scripts/train_model.py` | XGBoost + TargetEncoder | Bayesian hyperparameter search |
+| `scripts/train_model.py` | MLP (128, 64) + StandardScaler | Early stopping |
+
+Legacy trainers in `classifier_models/` remain as thin wrappers.
 
 ## Limitations
 

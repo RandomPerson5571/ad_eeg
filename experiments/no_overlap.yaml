@@ -1,0 +1,29 @@
+name: no_overlap
+description: Epoching without overlap (4 s epochs, 0 s overlap)
+
+preprocessing:
+  freq_filter: true
+  notch_filter: true
+  bad_channels: true
+  referencing: true
+  asr: true
+  asr_cutoff: 17
+  run_ica: true
+  ica_n_components: 0.95
+  ica_random_state: 97
+  AR: true
+  fle: true
+  erp: false
+
+epoching:
+  length: 4.0
+  overlap: 0.0
+
+filtering:
+  l_freq: 0.5
+  h_freq: 40
+  notch_freq: [50, 100, 150]
+
+bad_channels:
+  flat_std: 1.0e-15
+  noisy_z: 5.0

@@ -27,39 +27,85 @@ EEG_data/
   dataset2/
     participants.tsv
     sub-001/eeg/sub-001_task-eyesclosed_eeg.set
-    sub-002/eeg/...
-    derivatives/sub-001/eeg/...   # optional reference preprocessing
   dataset3/
     participants.tsv
-    sub-001/eeg/sub-001_task-photomark_eeg.set   # eyes-open photo stimulation
-    ...
+    sub-001/eeg/sub-001_task-photomark_eeg.set
+```
 
-Task names per dataset are set in `config.py` (`DATASET_TASKS`).
+Dataset aliases (see `configs/dataset.yaml`):
 
-### participants.tsv schema
+| Alias | Canonical name | Task |
+|-------|----------------|------|
+| `2`, `eyesclosed` | eyesclosed | eyesclosed |
+| `3`, `photomark` | photomark | photomark |
+| `all` | both datasets | — |
 
-| Column | Description |
-|--------|-------------|
-| participant_id | e.g. `sub-001` |
-| Gender | M / F |
-| Age | years |
-| Group | `A` = Alzheimer's, `F` = FTD, `C` = Control |
-| MMSE | Mini-Mental State Examination score |
+## Derived data layout
+
+Raw EEG stays in `EEG_data/`. All derived artifacts are under `data/`:
+
+```
+data/
+  audit/{dataset}/
+    metadata.csv
+    patient_summary.csv
+    dataset_summary.json
+    environment.json
+  preprocessed/{dataset}/{experiment}/
+    sub-001_raw.fif
+    sub-001_filtered.fif
+    sub-001_ica.fif
+    sub-001_clean.fif
+    sub-001_epo.fif
+    epochs/sub-001.npy
+    metadata.json
+    logs/sub-001.json
+  features/{dataset}/{experiment}/
+    subject_features.parquet
+    selected_features.parquet
+    feature_importance.csv
+    logs/sub-001.json
+  models/{dataset}/{experiment}/
+    xgboost.joblib
+    mlp.joblib
+  results/{dataset}/{experiment}/
+    benchmark.csv
+    benchmark_detail.json
+    benchmark_metadata.json
+    predictions.csv
+    figures/
+    metrics.json
+    confusion_matrix_xgboost.png
+    roc_xgboost.png
+```
+
+### Experiment configs
+
+Preprocessing parameters live in `experiments/` (not CLI flags):
+
+```
+experiments/
+  baseline.yaml   # full pipeline (notch, ASR, ICA)
+  fast.yaml       # bandpass + epoch + AutoReject only
+  ica95.yaml      # variant ICA/ASR settings
+  no_asr.yaml     # ablation: no ASR
+  no_ref.yaml     # ablation: no re-referencing
+  no_overlap.yaml # ablation: non-overlapping epochs
+```
+
+Each run writes `metadata.json` with MNE/Python versions, git commit, and config fingerprint.
+
+### Legacy paths (compat)
+
+| Legacy | New equivalent |
+|--------|----------------|
+| `parquet_files/features_dataset{N}.parquet` | `data/features/{name}/baseline/subject_features.parquet` |
+| `classifier_models/saved_models/` | `data/models/{name}/{experiment}/` |
+| `results/` | `data/results/{name}/{experiment}/` |
 
 ## Derived artifacts (Zenodo)
 
-Large derived files are hosted separately on Zenodo (not in git):
-
-| File | Description |
-|------|-------------|
-| `parquet_files/features_dataset2.parquet` | Epoch-level biomarkers (eyes-closed resting) |
-| `parquet_files/features_dataset3.parquet` | Epoch-level biomarkers (photomark task) |
-| `parquet_files/all_features.parquet` | Legacy combined file (deprecated) |
-| `classifier_models/saved_models/*.joblib` | Trained classifiers |
-| `results/metrics.json` | Evaluation metrics |
-| `results/preprocessing_config.json` | Parameter snapshot |
-
-After uploading to Zenodo, update `data/manifest.json` with the record ID, then:
+Large derived files are hosted separately on Zenodo (not in git). After uploading, update `data/manifest.json` with the record ID, then:
 
 ```bash
 python scripts/fetch_artifacts.py --record-id YOUR_RECORD_ID
@@ -67,9 +113,4 @@ python scripts/fetch_artifacts.py --record-id YOUR_RECORD_ID
 
 ## Ethics
 
-No new human subjects were recruited in this repository. All recordings come from the published Miltiadous dataset. Refer to the original paper for ethics approval and data-use terms.
-
-## License
-
-- **Code:** MIT (see `LICENSE`)
-- **Raw EEG data:** governed by the source dataset license from the publisher
+No new human subjects were recruited in this repository. All recordings come from the published Miltiadous dataset.

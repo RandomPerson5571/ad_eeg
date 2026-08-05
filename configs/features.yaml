@@ -1,0 +1,25 @@
+sampling_rate: 500
+n_fft: 512
+
+feature_columns:
+  - lzc_posterior
+  - mse_posterior
+  - rel_alpha
+  - rel_beta
+  - rel_theta
+  - rel_delta
+  - alpha_peak_freq
+  - theta_alpha_ratio
+  - theta_beta_ratio
+  - slow_fast_ratio
+  - theta_wpli
+  - alpha_wpli
+
+regional_channels:
+  posterior: [P3, Pz, P4, O1, O2]
+
+bands:
+  delta: [1, 4]
+  theta: [4, 8]
+  alpha: [8, 13]
+  beta: [13, 30]

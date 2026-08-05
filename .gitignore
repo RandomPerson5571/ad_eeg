@@ -1,3 +1,5 @@
+.cursor/
+
 # --------------------
 # Python
 # --------------------
@@ -9,9 +11,19 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-
 .venv/
-parquet_files/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# --------------------
+# Environment / secrets
+# --------------------
+.env
+.env.*
 
 # --------------------
 # EEG Raw Data (avoid committing multi-GB files)
@@ -19,18 +31,41 @@ parquet_files/
 *.set
 *.csv
 EEG_data/
+EEG_data.zip
 
 # --------------------
-# Feature Storage
+# Legacy feature storage
 # --------------------
-!*.parquet
+parquet_files/
 
 # --------------------
-# Results (generated at runtime)
+# Pipeline artifacts (generated at runtime)
+# --------------------
+data/*
+!data/manifest.json
+
+classifier_models/saved_models/
+*.fif
+*.joblib
+*.pkl
+*.pickle
+
+# --------------------
+# Results (legacy layout)
 # --------------------
 results/*
 !results/.gitkeep
 !results/metrics.example.json
+
+# --------------------
+# Jupyter
+# --------------------
+.ipynb_checkpoints/
+
+# --------------------
+# Netlify
+# --------------------
+.netlify/
 
 # --------------------
 # System / Editor

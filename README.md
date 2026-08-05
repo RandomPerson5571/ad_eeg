@@ -33,31 +33,31 @@ python scripts/download_data.py
 
 See [docs/DATA.md](docs/DATA.md) for layout and citation details.
 
-### 2. Extract features
+### 2. Preprocess (with checkpoints)
 
 ```bash
-# All subjects, both datasets
-python scripts/ingest_features.py --dataset 2 --all
-python scripts/ingest_features.py --dataset 3 --all
-
-# Single subject (testing)
-python scripts/ingest_features.py --dataset 2 --subject 1
+python scripts/preprocess_dataset.py --dataset eyesclosed --experiment baseline --workers 4
 ```
 
-### 3. Train models
+### 3. Extract features
 
 ```bash
-python scripts/run_pipeline.py --train xgboost,mlp --dataset 2
+python scripts/extract_features.py --dataset eyesclosed --experiment baseline
 ```
 
-Or individually:
+### 4. Train models
 
 ```bash
-python classifier_models/train_XGBoost.py --dataset 2
-python classifier_models/train_mlp.py --dataset 2
+python scripts/train_model.py --dataset eyesclosed --experiment baseline --model xgboost,mlp
 ```
 
-### 4. End-to-end
+### End-to-end
+
+```bash
+python pipeline.py --dataset eyesclosed --experiment baseline --stages preprocess,features,train
+```
+
+Legacy (deprecated):
 
 ```bash
 python scripts/ingest_features.py --dataset 2 --all
@@ -93,24 +93,23 @@ jupyter lab notebooks/
 Inspect preprocessing and features without notebooks:
 
 ```bash
-python scripts/inspect_qc.py preprocess --dataset 2 --subject 1
-python scripts/inspect_qc.py features
-python scripts/inspect_qc.py spot-check --dataset 2 --subject 1
+python scripts/inspect_preprocessing.py --dataset eyesclosed --subject sub-001
+python scripts/inspect_qc.py features   # legacy
 ```
 
-Reports are saved under `results/qc/`.
+Reports are saved under `data/results/{dataset}/{experiment}/qc/`.
 
 ## Project structure
 
 ```
-├── biomarkers/           # Feature computation (band power, complexity, connectivity)
-├── classifier_models/    # XGBoost and MLP trainers
-├── docs/                 # Data, methodology, reproducibility guides
-├── notebooks/            # Interactive walkthroughs
-├── scripts/              # CLI entry points (ingest, train, download, fetch, inspect_qc)
-├── util/                 # I/O, preprocessing, feature extraction, QC
-├── config.py             # Paths and parameters
-└── EEG_data/             # Raw EEG (gitignored, download separately)
+├── configs/              # Base defaults (dataset, features, training)
+├── experiments/          # Experiment configs (baseline, fast, ica95)
+├── eeg/                  # Shared library (preprocessing, features, training, qc)
+├── biomarkers/           # Feature algorithms
+├── scripts/              # Stage scripts (preprocess, extract, train, inspect)
+├── pipeline.py           # Orchestrator
+├── util/                 # Deprecated shims
+└── EEG_data/             # Raw EEG (gitignored)
 ```
 
 ## Documentation

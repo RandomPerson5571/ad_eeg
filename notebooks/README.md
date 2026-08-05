@@ -1,5 +1,7 @@
 # Notebooks
 
+> **Deprecated:** Legacy notebooks `01–05` below are superseded by [`kaggle/`](kaggle/README.md) (pipeline 00–08) and [`colab/00_pipeline_runner.ipynb`](colab/00_pipeline_runner.ipynb).
+
 Interactive walkthroughs for the EEG dementia classification pipeline.
 
 ## Setup

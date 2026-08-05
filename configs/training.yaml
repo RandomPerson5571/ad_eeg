@@ -1,0 +1,9 @@
+test_size: 0.2
+random_state: 42
+
+xgboost:
+  n_iter: 10
+  cv: 3
+
+mlp:
+  hidden_layers: [128, 64]

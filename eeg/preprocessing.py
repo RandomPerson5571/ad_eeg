@@ -1,0 +1,407 @@
+"""Staged EEG preprocessing with checkpoint support."""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import mne
+import numpy as np
+
+from asrpy import ASR
+from mne.preprocessing import ICA
+
+import autoreject
+
+from eeg.config import load_base_configs
+from eeg.io import (
+    load_checkpoint,
+    read_eeg_data,
+    save_checkpoint,
+    sha256_file,
+    try_load_checkpoint,
+    write_json,
+)
+from eeg.paths import checkpoint_path, subject_log_path
+
+
+@dataclass
+class PreprocessResult:
+    participant_id: str
+    status: str
+    log: dict[str, Any] = field(default_factory=dict)
+    epochs: mne.Epochs | None = None
+
+
+def _cfg_value(config: dict, *keys, default=None):
+    cur = config
+    for key in keys:
+        if not isinstance(cur, dict) or key not in cur:
+            return default
+        cur = cur[key]
+    return cur
+
+
+def detect_bad_channels(raw, flat_std=1e-15, noisy_z=5.0):
+    picks = mne.pick_types(raw.info, eeg=True, exclude=[])
+    if len(picks) == 0:
+        return []
+    data = raw.get_data(picks=picks)
+    ch_names = [raw.ch_names[i] for i in picks]
+    stds = np.std(data, axis=1)
+    med_std = np.median(stds) or 1e-15
+    bads = []
+    for ch, std in zip(ch_names, stds):
+        if std < flat_std or std > med_std * noisy_z:
+            bads.append(ch)
+    return bads
+
+
+def convert_to_epochs(clean_eeg, epoch_length=4.0, epoch_overlap=2.0):
+    return mne.make_fixed_length_epochs(
+        clean_eeg, duration=epoch_length, overlap=epoch_overlap, preload=True
+    )
+
+
+def stage_raw(raw_path: Path, sfreq: int) -> tuple[mne.io.BaseRaw, dict]:
+    raw = read_eeg_data(raw_path, sfreq=sfreq)
+    if raw.info["sfreq"] != sfreq:
+        raw.resample(sfreq)
+    return raw, {}
+
+
+def stage_filtered(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
+    prep = _cfg_value(config, "experiment", "preprocessing", default={})
+    filt = _cfg_value(config, "experiment", "filtering", default=_cfg_value(config, "filtering", default={}))
+    out = raw.copy()
+    meta: dict[str, Any] = {}
+    if prep.get("freq_filter", True):
+        out.filter(
+            l_freq=filt.get("l_freq", 0.5),
+            h_freq=filt.get("h_freq", 40),
+            fir_design="firwin",
+            filter_length="auto",
+        )
+    if prep.get("notch_filter") and filt.get("notch_freq"):
+        out.notch_filter(freqs=filt["notch_freq"])
+    return out, meta
+
+
+def stage_ica(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
+    prep = _cfg_value(config, "experiment", "preprocessing", default={})
+    meta: dict[str, Any] = {"ica_converged": None, "ica_n_components": None}
+    if not prep.get("run_ica", False):
+        return raw.copy(), meta
+
+    out = raw.copy()
+    sfreq = out.info["sfreq"]
+    seconds = out.n_times / sfreq
+    if seconds < 30:
+        meta["warnings"] = ["Recording too short for ICA, skipping."]
+        return out, meta
+
+    ica_n = prep.get("ica_n_components", 0.95)
+    ica_seed = prep.get("ica_random_state", 97)
+    raw_ica = out.copy().filter(l_freq=1.0, h_freq=None, verbose=False)
+    ica = ICA(n_components=ica_n, method="infomax", random_state=ica_seed)
+    ica.fit(raw_ica)
+    meta["ica_n_components"] = int(ica.n_components_)
+    meta["ica_converged"] = True
+
+    eog_inds, _ = ica.find_bads_eog(out, ch_name=["Fp1", "Fp2"], threshold=3.0)
+    ica.exclude = list(eog_inds)
+    if "ECG" in out.ch_names:
+        ecg_inds, _ = ica.find_bads_ecg(out, threshold=3.0, filterlength="auto")
+        ica.exclude = list(set(ica.exclude + list(ecg_inds)))
+    ica.apply(out)
+    return out, meta
+
+
+def stage_clean(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
+    prep = _cfg_value(config, "experiment", "preprocessing", default={})
+    bc = _cfg_value(config, "experiment", "bad_channels", default=_cfg_value(config, "bad_channels", default={}))
+    out = raw.copy()
+    meta: dict[str, Any] = {"bad_channels": []}
+
+    if prep.get("bad_channels", False):
+        bads = detect_bad_channels(
+            out,
+            flat_std=bc.get("flat_std", 1e-15),
+            noisy_z=bc.get("noisy_z", 5.0),
+        )
+        meta["bad_channels"] = bads
+        if bads:
+            out.info["bads"] = list(set(out.info.get("bads", []) + bads))
+            out.interpolate_bads(reset_bads=True)
+
+    if prep.get("referencing", False):
+        out.set_eeg_reference("average")
+
+    if prep.get("asr", False):
+        sfreq = int(_cfg_value(config, "features", "sampling_rate", default=500))
+        cutoff = prep.get("asr_cutoff", 17)
+        asr_model = ASR(sfreq=sfreq, cutoff=cutoff)
+        asr_model.fit(out)
+        out = asr_model.transform(out)
+
+    return out, meta
+
+
+def stage_epochs(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.Epochs, dict]:
+    prep = _cfg_value(config, "experiment", "preprocessing", default={})
+    epoch_cfg = _cfg_value(config, "experiment", "epoching", default=_cfg_value(config, "epoching", default={}))
+    meta: dict[str, Any] = {}
+
+    if prep.get("erp", False):
+        raise NotImplementedError("ERP epoching not supported in staged pipeline.")
+
+    epochs = convert_to_epochs(
+        raw,
+        epoch_length=epoch_cfg.get("length", 4.0),
+        epoch_overlap=epoch_cfg.get("overlap", 2.0),
+    )
+    n_before = len(epochs)
+    meta["n_epochs_before_ar"] = n_before
+    meta["reject_log"] = None
+
+    if prep.get("AR", True):
+        ar = autoreject.AutoReject(
+            n_interpolate=[1, 2, 3, 4], random_state=11, n_jobs=1, verbose=False
+        )
+        ar.fit(epochs[: min(20, len(epochs))])
+        epochs, reject_log = ar.transform(epochs, return_log=True)
+        n_rejected = int(reject_log.bad_epochs.sum())
+        meta["n_epochs_rejected"] = n_rejected
+        meta["n_epochs_after_ar"] = len(epochs)
+        meta["reject_log"] = reject_log
+    else:
+        meta["n_epochs_after_ar"] = n_before
+        meta["n_epochs_rejected"] = 0
+
+    return epochs, meta
+
+
+# Legacy single-call API (used by util/qc and tests)
+def preprocess_EEG(
+    eeg_raw,
+    freq_filter=True,
+    notch_filter=False,
+    bad_channels=False,
+    referencing=False,
+    asr=False,
+    asr_cutoff=None,
+    run_ica=False,
+    AR=True,
+    erp=False,
+    fle=True,
+    verbose_plots=False,
+    return_reject_log=False,
+):
+    base = load_base_configs()
+    sfreq = base["features"]["sampling_rate"]
+    config = {
+        "experiment": {
+            "preprocessing": {
+                "freq_filter": freq_filter,
+                "notch_filter": notch_filter,
+                "bad_channels": bad_channels,
+                "referencing": referencing,
+                "asr": asr,
+                "asr_cutoff": asr_cutoff or 17,
+                "run_ica": run_ica,
+                "AR": AR,
+                "erp": erp,
+                "fle": fle,
+            },
+            "filtering": {"l_freq": 0.5, "h_freq": 40, "notch_freq": [50, 100, 150]},
+            "epoching": {"length": 4.0, "overlap": 2.0},
+        },
+        "features": {"sampling_rate": sfreq},
+    }
+
+    filtered, _ = stage_filtered(eeg_raw, config) if freq_filter or notch_filter else (eeg_raw.copy(), {})
+    ica_out, _ = stage_ica(filtered, config) if run_ica else (filtered, {})
+    clean, clean_meta = stage_clean(ica_out, config)
+    epochs, epoch_meta = stage_epochs(clean, config)
+
+    meta = {**clean_meta, **epoch_meta}
+    reject_log = epoch_meta.get("reject_log")
+    if return_reject_log:
+        return clean, epochs, reject_log, meta
+    return clean, epochs
+
+
+STAGE_FUNCS = {
+    "raw": None,
+    "filtered": stage_filtered,
+    "ica": stage_ica,
+    "clean": stage_clean,
+    "epochs": stage_epochs,
+}
+
+
+def _log_is_valid(log: dict, raw_sha256: str, fingerprint: str) -> bool:
+    return (
+        log.get("raw_sha256") == raw_sha256
+        and log.get("config_fingerprint") == fingerprint
+        and log.get("status") == "ok"
+    )
+
+
+def _furthest_valid_stage(
+    dataset: str,
+    experiment: str,
+    participant_id: str,
+    raw_sha256: str,
+    fingerprint: str,
+) -> str | None:
+    from eeg.io import read_json
+
+    log_path = subject_log_path(dataset, experiment, participant_id)
+    if not log_path.exists():
+        return None
+    log = read_json(log_path)
+    if not _log_is_valid(log, raw_sha256, fingerprint):
+        return None
+
+    completed = log.get("stages_completed", [])
+    order = ["raw", "filtered", "ica", "clean", "epochs"]
+
+    # Fast path: final artifact valid → fully done
+    if "epochs" in completed:
+        cp = checkpoint_path(dataset, experiment, participant_id, "epochs")
+        if try_load_checkpoint(cp, "epochs") is not None:
+            return "epochs"
+
+    valid = None
+    for stage in order:
+        if stage not in completed:
+            break
+        cp = checkpoint_path(dataset, experiment, participant_id, stage)
+        if try_load_checkpoint(cp, stage) is not None:
+            valid = stage
+        else:
+            break
+    return valid
+
+
+def preprocess_subject(
+    raw_path: Path,
+    participant_id: str,
+    dataset_name: str,
+    experiment: str,
+    config: dict,
+    config_fp: str,
+    force: bool = False,
+) -> PreprocessResult:
+    """Run or resume full checkpoint chain for one subject."""
+    t0 = time.perf_counter()
+    base = load_base_configs()
+    sfreq = base["features"]["sampling_rate"]
+    raw_sha256 = sha256_file(raw_path)
+
+    log: dict[str, Any] = {
+        "participant_id": participant_id,
+        "raw_sha256": raw_sha256,
+        "config_fingerprint": config_fp,
+        "stages": {},
+        "warnings": [],
+        "stages_completed": [],
+    }
+
+    if not force:
+        furthest = _furthest_valid_stage(
+            dataset_name, experiment, participant_id, raw_sha256, config_fp
+        )
+        if furthest == "epochs":
+            epochs_path = checkpoint_path(dataset_name, experiment, participant_id, "epochs")
+            epochs = load_checkpoint(epochs_path, "epochs")
+            log["status"] = "skipped"
+            log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
+            write_json(subject_log_path(dataset_name, experiment, participant_id), log)
+            return PreprocessResult(participant_id, "skipped", log, epochs)
+
+    stage_order = ["raw", "filtered", "ica", "clean", "epochs"]
+    start_idx = 0
+    if not force:
+        furthest = _furthest_valid_stage(
+            dataset_name, experiment, participant_id, raw_sha256, config_fp
+        )
+        if furthest:
+            start_idx = stage_order.index(furthest)
+
+    current_raw: mne.io.BaseRaw | None = None
+    current_epochs: mne.Epochs | None = None
+
+    for i, stage in enumerate(stage_order):
+        if i < start_idx:
+            continue
+
+        cp = checkpoint_path(dataset_name, experiment, participant_id, stage)
+        stage_t0 = time.perf_counter()
+
+        try:
+            if stage == "raw":
+                current_raw, meta = stage_raw(raw_path, sfreq)
+                save_checkpoint(current_raw, cp)
+            elif stage == "filtered":
+                assert current_raw is not None or start_idx > 0
+                if current_raw is None:
+                    prev = checkpoint_path(dataset_name, experiment, participant_id, "raw")
+                    current_raw = load_checkpoint(prev, "raw")
+                current_raw, meta = stage_filtered(current_raw, config)
+                save_checkpoint(current_raw, cp)
+            elif stage == "ica":
+                if current_raw is None:
+                    prev = checkpoint_path(dataset_name, experiment, participant_id, "filtered")
+                    current_raw = load_checkpoint(prev, "filtered")
+                current_raw, meta = stage_ica(current_raw, config)
+                save_checkpoint(current_raw, cp)
+            elif stage == "clean":
+                if current_raw is None:
+                    prev = checkpoint_path(dataset_name, experiment, participant_id, "ica")
+                    current_raw = load_checkpoint(prev, "ica")
+                current_raw, meta = stage_clean(current_raw, config)
+                save_checkpoint(current_raw, cp)
+            elif stage == "epochs":
+                if current_raw is None:
+                    prev = checkpoint_path(dataset_name, experiment, participant_id, "clean")
+                    current_raw = load_checkpoint(prev, "clean")
+                current_epochs, meta = stage_epochs(current_raw, config)
+                save_checkpoint(current_epochs, cp)
+
+            elapsed = round(time.perf_counter() - stage_t0, 2)
+            log["stages"][stage] = {"runtime_s": elapsed, "status": "ok", **meta}
+            log["stages_completed"].append(stage)
+            if meta.get("warnings"):
+                log["warnings"].extend(meta["warnings"])
+            if meta.get("bad_channels"):
+                log["bad_channels"] = meta["bad_channels"]
+            if "ica_n_components" in meta and meta["ica_n_components"] is not None:
+                log["ica_n_components"] = meta["ica_n_components"]
+            if meta.get("ica_converged") is not None:
+                log["ica_converged"] = meta["ica_converged"]
+            if "n_epochs_before_ar" in meta:
+                log["n_epochs_before_ar"] = meta["n_epochs_before_ar"]
+            if "n_epochs_after_ar" in meta:
+                log["n_epochs_after_ar"] = meta["n_epochs_after_ar"]
+            if "n_epochs_rejected" in meta:
+                log["n_epochs_rejected"] = meta["n_epochs_rejected"]
+
+        except Exception as exc:
+            log["stages"][stage] = {
+                "runtime_s": round(time.perf_counter() - stage_t0, 2),
+                "status": "error",
+                "error": str(exc),
+            }
+            log["status"] = "error"
+            log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
+            write_json(subject_log_path(dataset_name, experiment, participant_id), log)
+            return PreprocessResult(participant_id, "error", log)
+
+    log["status"] = "ok"
+    log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
+    write_json(subject_log_path(dataset_name, experiment, participant_id), log)
+    return PreprocessResult(participant_id, "ok", log, current_epochs)

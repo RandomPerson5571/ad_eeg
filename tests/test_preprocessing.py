@@ -53,7 +53,7 @@ def test_preprocess_does_not_plot_by_default():
     mock_ica.find_bads_eog.return_value = ([0], np.array([4.0]))
     mock_ica.find_bads_ecg.return_value = ([], np.array([]))
 
-    with patch("util.preprocessing.ICA", return_value=mock_ica) as ica_cls:
+    with patch("eeg.preprocessing.ICA", return_value=mock_ica) as ica_cls:
         preprocess_EEG(
             raw,
             freq_filter=False,
@@ -75,6 +75,6 @@ def test_preprocess_does_not_plot_by_default():
 
 def test_all_channels_not_mutated_after_preprocessing_import():
     expected_len = len(ALL_CHANNELS)
-    importlib.reload(importlib.import_module("util.preprocessing"))
+    importlib.reload(importlib.import_module("eeg.preprocessing"))
     assert len(ALL_CHANNELS) == expected_len
     assert "Fp1" in ALL_CHANNELS

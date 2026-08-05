@@ -87,12 +87,25 @@ def save_as_parquet(df, participant_id, dataset_id, label):
         print(f"Initialized dataset {dataset_id} features at {dataset_parquet_path}")
 
 
-def load_features_df(dataset_id=None):
+def load_features_df(dataset_id=None, dataset_name=None, experiment="baseline"):
+    try:
+        from eeg.io import load_features_df as _load_new
+
+        if dataset_name is not None:
+            return _load_new(dataset_name=dataset_name, experiment=experiment, dataset_id=dataset_id)
+        if dataset_id is not None:
+            from eeg.config import resolve_dataset
+
+            ds = resolve_dataset(str(dataset_id))[0]
+            return _load_new(dataset_name=ds.name, experiment=experiment, dataset_id=dataset_id)
+    except FileNotFoundError:
+        pass
+
     if dataset_id is not None:
         path = parquet_path(dataset_id)
         if not os.path.exists(path):
             raise FileNotFoundError(
-                f"{path} not found. Run ingest for dataset {dataset_id} first."
+                f"{path} not found. Run extract_features.py for dataset {dataset_id} first."
             )
         return pd.read_parquet(path)
 
@@ -104,7 +117,7 @@ def load_features_df(dataset_id=None):
         return pd.read_parquet(parquet_path(available[0]))
 
     raise FileNotFoundError(
-        "No feature parquet found. Pass dataset_id or run ingest_features.py first."
+        "No feature parquet found. Pass dataset_id or run extract_features.py first."
     )
 
 
