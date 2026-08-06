@@ -26,9 +26,9 @@ Each dataset is processed and trained **separately** via `--dataset eyesclosed` 
 Experiment configs in `experiments/` define preprocessing. Default `baseline`:
 
 1. Load raw → `sub-NNN_raw.fif`
-2. Band-pass 0.5–40 Hz + notch → `sub-NNN_filtered.fif`
-3. ICA (if enabled) → `sub-NNN_ica.fif`
-4. Bad channels + average ref + ASR → `sub-NNN_clean.fif`
+2. Band-pass 0.5–40 Hz + notch → `sub-NNN_filtered_raw.fif`
+3. ICA (if enabled) → `sub-NNN_ica_raw.fif`
+4. Bad channels + average ref + ASR → `sub-NNN_clean_raw.fif`
 5. Epoching (4 s, 2 s overlap) + AutoReject → `sub-NNN_epo.fif`
 
 Stages are resumable: each subject log stores `raw_sha256` and `config_fingerprint`.

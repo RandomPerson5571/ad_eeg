@@ -14,6 +14,8 @@ import pandas as pd
 
 from eeg.config import load_base_configs
 from eeg.paths import (
+    LEGACY_STAGE_SUFFIX,
+    STAGE_SUFFIX,
     features_parquet_path,
     legacy_parquet_path,
     resolve_features_path,
@@ -79,19 +81,44 @@ def load_checkpoint(path: Path, stage: str) -> mne.io.BaseRaw | mne.Epochs:
     return load_raw(path)
 
 
+def _legacy_checkpoint_path(path: Path, stage: str) -> Path | None:
+    legacy_suffix = LEGACY_STAGE_SUFFIX.get(stage)
+    if not legacy_suffix:
+        return None
+    suffix = STAGE_SUFFIX[stage]
+    name = path.name
+    if not name.endswith(suffix):
+        return None
+    return path.parent / f"{name[: -len(suffix)]}{legacy_suffix}"
+
+
 def try_load_checkpoint(path: Path, stage: str) -> mne.io.BaseRaw | mne.Epochs | None:
-    if not path.exists():
-        return None
-    try:
-        return load_checkpoint(path, stage)
-    except Exception:
-        return None
+    for candidate in (path, _legacy_checkpoint_path(path, stage)):
+        if candidate is None or not candidate.exists():
+            continue
+        try:
+            return load_checkpoint(candidate, stage)
+        except Exception:
+            continue
+    return None
+
+
+def _json_default(obj: Any) -> Any:
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(data, f, indent=2, default=_json_default)
 
 
 def read_json(path: Path) -> dict[str, Any]:

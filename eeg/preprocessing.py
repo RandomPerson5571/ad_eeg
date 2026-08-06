@@ -24,7 +24,7 @@ from eeg.io import (
     try_load_checkpoint,
     write_json,
 )
-from eeg.paths import checkpoint_path, subject_log_path
+from eeg.paths import checkpoint_path, resolve_checkpoint_path, subject_log_path
 from eeg.qc import compute_band_power_table, compute_psd_delta, compute_snr
 
 
@@ -473,7 +473,9 @@ def preprocess_subject(
             dataset_name, experiment, participant_id, raw_sha256, config_fp
         )
         if furthest == "epochs":
-            epochs_path = checkpoint_path(dataset_name, experiment, participant_id, "epochs")
+            epochs_path = resolve_checkpoint_path(
+                dataset_name, experiment, participant_id, "epochs"
+            )
             epochs = load_checkpoint(epochs_path, "epochs")
             from eeg.io import read_json
 
@@ -512,29 +514,39 @@ def preprocess_subject(
             elif stage == "filtered":
                 assert current_raw is not None or start_idx > 0
                 if current_raw is None:
-                    prev = checkpoint_path(dataset_name, experiment, participant_id, "raw")
+                    prev = resolve_checkpoint_path(
+                        dataset_name, experiment, participant_id, "raw"
+                    )
                     current_raw = load_checkpoint(prev, "raw")
                 current_raw, meta = stage_filtered(current_raw, config)
                 save_checkpoint(current_raw, cp)
             elif stage == "ica":
                 if current_raw is None:
-                    prev = checkpoint_path(dataset_name, experiment, participant_id, "filtered")
+                    prev = resolve_checkpoint_path(
+                        dataset_name, experiment, participant_id, "filtered"
+                    )
                     current_raw = load_checkpoint(prev, "filtered")
                 current_raw, meta = stage_ica(current_raw, config)
                 save_checkpoint(current_raw, cp)
             elif stage == "clean":
                 if current_raw is None:
-                    prev = checkpoint_path(dataset_name, experiment, participant_id, "ica")
+                    prev = resolve_checkpoint_path(
+                        dataset_name, experiment, participant_id, "ica"
+                    )
                     current_raw = load_checkpoint(prev, "ica")
                 raw_before = None
-                raw_cp = checkpoint_path(dataset_name, experiment, participant_id, "raw")
+                raw_cp = resolve_checkpoint_path(
+                    dataset_name, experiment, participant_id, "raw"
+                )
                 if raw_cp.exists():
                     raw_before = load_checkpoint(raw_cp, "raw")
                 current_raw, meta = stage_clean(current_raw, config, raw_before=raw_before)
                 save_checkpoint(current_raw, cp)
             elif stage == "epochs":
                 if current_raw is None:
-                    prev = checkpoint_path(dataset_name, experiment, participant_id, "clean")
+                    prev = resolve_checkpoint_path(
+                        dataset_name, experiment, participant_id, "clean"
+                    )
                     current_raw = load_checkpoint(prev, "clean")
                 current_epochs, meta = stage_epochs(current_raw, config)
                 save_checkpoint(current_epochs, cp)

@@ -8,7 +8,7 @@ from typing import Iterable
 import numpy as np
 
 from eeg.io import list_subjects, load_checkpoint
-from eeg.paths import checkpoint_path, epochs_npy_dir
+from eeg.paths import checkpoint_path, epochs_npy_dir, resolve_checkpoint_path
 
 
 def _normalize_epochs(data: np.ndarray, method: str | None) -> np.ndarray:
@@ -29,7 +29,7 @@ def export_epochs_npy(
     normalize: str | None = None,
 ) -> Path:
     """Export one subject's epochs to (n_epochs, n_channels, n_samples) float32 .npy."""
-    epochs_path = checkpoint_path(dataset, experiment, participant_id, "epochs")
+    epochs_path = resolve_checkpoint_path(dataset, experiment, participant_id, "epochs")
     if not epochs_path.exists():
         raise FileNotFoundError(f"Missing epochs checkpoint: {epochs_path}")
 

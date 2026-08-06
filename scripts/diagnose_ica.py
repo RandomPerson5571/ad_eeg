@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from eeg.cli import resolve_datasets_arg, subject_num_from_id
 from eeg.config import load_experiment
 from eeg.io import load_checkpoint
-from eeg.paths import checkpoint_path
+from eeg.paths import resolve_checkpoint_path
 from eeg.preprocessing import stage_ica
 
 
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     participant_id = f"sub-{subject_num:03d}"
 
     config = load_experiment(args.experiment)
-    filtered_path = checkpoint_path(ds.name, args.experiment, participant_id, "filtered")
+    filtered_path = resolve_checkpoint_path(ds.name, args.experiment, participant_id, "filtered")
     if not filtered_path.exists():
         raise SystemExit(
             f"Filtered checkpoint not found: {filtered_path}\n"

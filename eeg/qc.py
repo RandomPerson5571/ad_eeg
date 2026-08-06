@@ -10,7 +10,7 @@ import mne
 import numpy as np
 
 from eeg.io import list_subjects, load_checkpoint, read_json
-from eeg.paths import checkpoint_path, qc_report_dir, subject_log_path
+from eeg.paths import qc_report_dir, resolve_checkpoint_path, subject_log_path
 
 BAND_RANGES = {
     "delta": (1, 4),
@@ -176,7 +176,7 @@ def load_checkpoints_for_qc(
     """Load available checkpoints for visualization (no stage re-execution)."""
     loaded: dict[str, mne.io.BaseRaw | mne.Epochs] = {}
     for stage in ("raw", "filtered", "clean", "epochs"):
-        cp = checkpoint_path(dataset_name, experiment, participant_id, stage)
+        cp = resolve_checkpoint_path(dataset_name, experiment, participant_id, stage)
         if cp.exists():
             loaded[stage] = load_checkpoint(cp, stage)
     return loaded

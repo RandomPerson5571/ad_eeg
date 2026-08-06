@@ -9,10 +9,16 @@ from eeg.config import PROJECT_ROOT, load_base_configs
 STAGES = ("raw", "filtered", "ica", "clean", "epochs")
 STAGE_SUFFIX = {
     "raw": "_raw.fif",
+    "filtered": "_filtered_raw.fif",
+    "ica": "_ica_raw.fif",
+    "clean": "_clean_raw.fif",
+    "epochs": "_epo.fif",
+}
+# Pre-MNE-naming checkpoints (resume reads these if new names are absent)
+LEGACY_STAGE_SUFFIX = {
     "filtered": "_filtered.fif",
     "ica": "_ica.fif",
     "clean": "_clean.fif",
-    "epochs": "_epo.fif",
 }
 
 
@@ -55,6 +61,21 @@ def checkpoint_path(
 ) -> Path:
     suffix = STAGE_SUFFIX[stage]
     return preprocessed_dir(dataset, experiment) / f"{participant_id}{suffix}"
+
+
+def resolve_checkpoint_path(
+    dataset: str, experiment: str, participant_id: str, stage: str
+) -> Path:
+    """Return checkpoint path for reading (new MNE naming, else legacy)."""
+    primary = checkpoint_path(dataset, experiment, participant_id, stage)
+    if primary.exists():
+        return primary
+    legacy_suffix = LEGACY_STAGE_SUFFIX.get(stage)
+    if legacy_suffix:
+        legacy = preprocessed_dir(dataset, experiment) / f"{participant_id}{legacy_suffix}"
+        if legacy.exists():
+            return legacy
+    return primary
 
 
 def subject_log_path(dataset: str, experiment: str, participant_id: str, stage: str = "preprocessed") -> Path:

@@ -54,6 +54,9 @@ def test_preprocess_skips_when_epochs_complete(tmp_path):
     with patch("eeg.preprocessing.subject_log_path", return_value=log_path), patch(
         "eeg.preprocessing.checkpoint_path",
         side_effect=lambda ds, exp, pid, stage: tmp_path / f"{pid}{STAGE_SUFFIX[stage]}",
+    ), patch(
+        "eeg.preprocessing.resolve_checkpoint_path",
+        side_effect=lambda ds, exp, pid, stage: tmp_path / f"{pid}{STAGE_SUFFIX[stage]}",
     ), patch("eeg.preprocessing.sha256_file", return_value="deadbeef"):
         result = preprocess_subject(
             raw_path=tmp_path / "raw.set",

@@ -53,9 +53,9 @@ data/
     environment.json
   preprocessed/{dataset}/{experiment}/
     sub-001_raw.fif
-    sub-001_filtered.fif
-    sub-001_ica.fif
-    sub-001_clean.fif
+    sub-001_filtered_raw.fif
+    sub-001_ica_raw.fif
+    sub-001_clean_raw.fif
     sub-001_epo.fif
     epochs/sub-001.npy
     metadata.json

@@ -9,6 +9,7 @@ from eeg.paths import (
     checkpoint_path,
     features_parquet_path,
     preprocessed_dir,
+    resolve_checkpoint_path,
     subject_log_path,
 )
 
@@ -41,9 +42,26 @@ def test_unknown_dataset_raises():
 def test_checkpoint_paths():
     p = checkpoint_path("eyesclosed", "baseline", "sub-001", "epochs")
     assert p.name == "sub-001_epo.fif"
+    assert checkpoint_path("eyesclosed", "baseline", "sub-001", "filtered").name == (
+        "sub-001_filtered_raw.fif"
+    )
+    assert checkpoint_path("eyesclosed", "baseline", "sub-001", "clean").name == (
+        "sub-001_clean_raw.fif"
+    )
     assert "preprocessed" in str(p)
     assert "eyesclosed" in str(p)
     assert "baseline" in str(p)
+
+
+def test_resolve_checkpoint_path_legacy_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "eeg.paths.preprocessed_dir",
+        lambda dataset, experiment: tmp_path,
+    )
+    legacy = tmp_path / "sub-001_filtered.fif"
+    legacy.write_text("legacy", encoding="utf-8")
+    resolved = resolve_checkpoint_path("eyesclosed", "baseline", "sub-001", "filtered")
+    assert resolved == legacy
 
 
 def test_features_parquet_path():

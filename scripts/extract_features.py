@@ -20,7 +20,7 @@ from eeg.io import (
     sha256_file,
     write_json,
 )
-from eeg.paths import checkpoint_path, features_parquet_path, subject_log_path
+from eeg.paths import checkpoint_path, features_parquet_path, resolve_checkpoint_path, subject_log_path
 from eeg.runner import run_parallel, summarize_batch, update_experiment_metadata
 
 
@@ -50,7 +50,7 @@ def _extract_worker(
     config_fp,
     force,
 ):
-    epochs_path = checkpoint_path(dataset_name, experiment, participant_id, "epochs")
+    epochs_path = resolve_checkpoint_path(dataset_name, experiment, participant_id, "epochs")
 
     if not force and _subject_done(dataset_name, experiment, participant_id, epochs_path, config_fp):
         return {"participant_id": participant_id, "status": "skipped"}

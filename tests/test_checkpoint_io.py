@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 
 from eeg.config import load_base_configs
-from eeg.io import load_checkpoint, save_checkpoint, try_load_checkpoint
+import json
+
+from eeg.io import load_checkpoint, read_json, save_checkpoint, try_load_checkpoint, write_json
 
 
 def _synthetic_raw(n_channels=4, n_times=1000):
@@ -44,3 +46,22 @@ def test_try_load_corrupt_returns_none(tmp_path):
     bad = tmp_path / "bad.fif"
     bad.write_text("not a fif file")
     assert try_load_checkpoint(bad, "raw") is None
+
+
+def test_write_json_handles_numpy_scalars(tmp_path):
+    path = tmp_path / "log.json"
+    write_json(
+        path,
+        {
+            "ica_excluded_indices": [np.int64(0), np.int64(3)],
+            "pct_epochs_rejected": np.float64(12.5),
+            "flag": np.bool_(True),
+        },
+    )
+    loaded = read_json(path)
+    assert loaded == {
+        "ica_excluded_indices": [0, 3],
+        "pct_epochs_rejected": 12.5,
+        "flag": True,
+    }
+    assert all(isinstance(v, int) for v in loaded["ica_excluded_indices"])
