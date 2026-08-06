@@ -4,11 +4,11 @@ datasets:
     id: 2
     task: eyesclosed
     raw_subdir: dataset2
-    aliases: ["2", "eyesclosed", "eyes_closed"]
+    aliases: ["2", "dataset2", "eyesclosed", "eyes_closed"]
   photomark:
     id: 3
     task: photomark
     raw_subdir: dataset3
-    aliases: ["3", "photomark", "photo_stimulation"]
+    aliases: ["3", "dataset3", "photomark", "photo_stimulation"]
 
 raw_data_dir: EEG_data

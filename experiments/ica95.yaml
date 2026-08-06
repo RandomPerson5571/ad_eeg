@@ -1,5 +1,5 @@
 name: ica95
-description: ICA with 95% variance explained and ASR cutoff 20
+description: ICA with n_EEG-1 components and ASR cutoff 20
 
 preprocessing:
   freq_filter: true
@@ -9,7 +9,7 @@ preprocessing:
   asr: true
   asr_cutoff: 20
   run_ica: true
-  ica_n_components: 0.95
+  ica_n_components: auto
   ica_random_state: 97
   AR: true
   fle: true

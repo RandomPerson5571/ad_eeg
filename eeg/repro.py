@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from eeg.config import git_commit_hash
+from eeg.config import config_fingerprint, git_commit_hash
 
 
 def init_repro(seed: int = 42) -> dict[str, int]:
@@ -32,12 +32,19 @@ def snapshot_environment() -> dict[str, Any]:
     """Capture runtime versions, git SHA, and optional CUDA info."""
     env: dict[str, Any] = {
         "python": sys.version.split()[0],
+        "python_version": sys.version.split()[0],
         "numpy": _package_version("numpy"),
         "sklearn": _package_version("scikit-learn"),
         "xgboost": _package_version("xgboost"),
         "mne": _package_version("mne"),
+        "mne_version": _package_version("mne"),
+        "autoreject": _package_version("autoreject"),
+        "autoreject_version": _package_version("autoreject"),
+        "asrpy": _package_version("asrpy"),
+        "asrpy_version": _package_version("asrpy"),
         "pandas": _package_version("pandas"),
         "git_sha": git_commit_hash() or "unknown",
+        "git_commit": git_commit_hash() or "unknown",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -51,6 +58,22 @@ def snapshot_environment() -> dict[str, Any]:
         env["torch"] = None
         env["cuda_available"] = False
     return env
+
+
+def preprocessing_fingerprint(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical preprocessing fingerprint for dataset reports."""
+    env = snapshot_environment()
+    fp: dict[str, Any] = {
+        "mne_version": env.get("mne_version"),
+        "autoreject_version": env.get("autoreject_version"),
+        "asrpy_version": env.get("asrpy_version"),
+        "git_commit": env.get("git_commit"),
+        "python_version": env.get("python_version"),
+        "timestamp": env.get("timestamp"),
+    }
+    if config is not None:
+        fp["config_sha256"] = config_fingerprint(config)
+    return fp
 
 
 def attach_repro_metadata(result: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:

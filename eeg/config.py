@@ -139,21 +139,15 @@ def experiment_metadata(
     config: dict[str, Any],
     **extra: Any,
 ) -> dict[str, Any]:
-    import platform
-    import sys
     from datetime import datetime, timezone
 
-    import mne
+    from eeg.repro import preprocessing_fingerprint
 
     prep = config.get("experiment", {}).get("preprocessing", config.get("preprocessing", {}))
     meta = {
         "dataset": dataset_name,
         "experiment": experiment_name,
-        "mne_version": mne.__version__,
-        "python_version": sys.version.split()[0],
-        "platform": platform.platform(),
-        "git_commit": git_commit_hash(),
-        "config_fingerprint": config_fingerprint(config),
+        "fingerprint": preprocessing_fingerprint(config),
         "asr_cutoff": prep.get("asr_cutoff"),
         "ica_n_components": prep.get("ica_n_components"),
         "date": datetime.now(timezone.utc).isoformat(),

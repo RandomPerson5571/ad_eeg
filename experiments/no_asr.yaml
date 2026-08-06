@@ -8,7 +8,7 @@ preprocessing:
   referencing: true
   asr: false
   run_ica: true
-  ica_n_components: 0.95
+  ica_n_components: auto
   ica_random_state: 97
   AR: true
   fle: true

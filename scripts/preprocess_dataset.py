@@ -16,6 +16,7 @@ from eeg.cli import add_common_args, resolve_datasets_arg, subject_num_from_id
 from eeg.config import config_fingerprint, load_experiment
 from eeg.io import list_subjects
 from eeg.paths import preprocessed_dir, raw_eeg_path
+from eeg.preprocess_report import write_preprocess_report
 from eeg.preprocessing import preprocess_subject
 from eeg.runner import run_parallel, summarize_batch, update_experiment_metadata
 
@@ -47,6 +48,7 @@ def run_preprocess(
     force: bool = False,
     limit: int | None = None,
     subject: str | None = None,
+    qc_plots: bool = False,
 ):
     config = load_experiment(experiment)
     config_fp = config_fingerprint(config)
@@ -78,10 +80,14 @@ def run_preprocess(
         results = run_parallel(tasks, _worker, workers=workers)
         batch = summarize_batch(results)
         update_experiment_metadata(ds.name, experiment, config, "preprocessed", batch, len(tasks))
-        all_results.extend(results)
+        report_paths = write_preprocess_report(
+            ds.name, experiment, config=config, qc_plots=qc_plots, dataset_spec=ds
+        )
         print(
             f"[{ds.name}] completed={batch.completed} skipped={batch.skipped} failed={batch.failed}"
         )
+        print(f"[{ds.name}] QC report: {report_paths['summary_csv']}")
+        all_results.extend(results)
 
     return all_results
 
@@ -90,6 +96,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Preprocess raw EEG with staged checkpoints.")
     add_common_args(parser)
     parser.add_argument("--subject", help="Single subject: sub-001 or 1")
+    parser.add_argument(
+        "--qc-plots",
+        action="store_true",
+        help="Generate per-subject QC PNGs from checkpoints after preprocessing",
+    )
     return parser.parse_args()
 
 
@@ -107,4 +118,5 @@ if __name__ == "__main__":
         force=args.force,
         limit=args.limit,
         subject=subject,
+        qc_plots=args.qc_plots,
     )

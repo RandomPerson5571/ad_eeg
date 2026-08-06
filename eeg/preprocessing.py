@@ -25,6 +25,7 @@ from eeg.io import (
     write_json,
 )
 from eeg.paths import checkpoint_path, subject_log_path
+from eeg.qc import compute_band_power_table, compute_psd_delta, compute_snr
 
 
 @dataclass
@@ -69,14 +70,27 @@ def stage_raw(raw_path: Path, sfreq: int) -> tuple[mne.io.BaseRaw, dict]:
     raw = read_eeg_data(raw_path, sfreq=sfreq)
     if raw.info["sfreq"] != sfreq:
         raw.resample(sfreq)
-    return raw, {}
+    picks = mne.pick_types(raw.info, eeg=True, exclude=[])
+    meta = {
+        "duration_s": round(raw.n_times / raw.info["sfreq"], 2),
+        "sfreq": float(raw.info["sfreq"]),
+        "n_channels": len(raw.ch_names),
+        "n_eeg_channels": len(picks),
+    }
+    return raw, meta
 
 
 def stage_filtered(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
     prep = _cfg_value(config, "experiment", "preprocessing", default={})
     filt = _cfg_value(config, "experiment", "filtering", default=_cfg_value(config, "filtering", default={}))
     out = raw.copy()
-    meta: dict[str, Any] = {}
+    meta: dict[str, Any] = {
+        "freq_filter": bool(prep.get("freq_filter", True)),
+        "notch_filter": bool(prep.get("notch_filter")),
+        "l_freq": filt.get("l_freq", 0.5),
+        "h_freq": filt.get("h_freq", 40),
+        "notch_freq": filt.get("notch_freq"),
+    }
     if prep.get("freq_filter", True):
         out.filter(
             l_freq=filt.get("l_freq", 0.5),
@@ -89,9 +103,32 @@ def stage_filtered(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, d
     return out, meta
 
 
+def _resolve_ica_n_components(raw: mne.io.BaseRaw, ica_n: Any) -> tuple[int | float, Any]:
+    """Resolve ICA n_components; 'auto' or None → n_EEG - 1."""
+    eeg_picks = mne.pick_types(raw.info, eeg=True, exclude=[])
+    n_eeg = len(eeg_picks)
+    if ica_n is None or ica_n == "auto":
+        return max(1, n_eeg - 1), "auto"
+    if isinstance(ica_n, float):
+        return ica_n, ica_n
+    return int(ica_n), ica_n
+
+
 def stage_ica(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
     prep = _cfg_value(config, "experiment", "preprocessing", default={})
-    meta: dict[str, Any] = {"ica_converged": None, "ica_n_components": None}
+    meta: dict[str, Any] = {
+        "ica_converged": None,
+        "ica_n_components": None,
+        "ica_n_components_requested": None,
+        "ica_n_components_fitted": None,
+        "ica_n_removed": 0,
+        "ica_excluded_indices": [],
+        "ica_eog_indices": [],
+        "ica_ecg_indices": [],
+        "ica_n_iter": None,
+        "ica_pca_var_ratio_top5": [],
+        "ica_eeg_rank": None,
+    }
     if not prep.get("run_ica", False):
         return raw.copy(), meta
 
@@ -102,24 +139,68 @@ def stage_ica(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
         meta["warnings"] = ["Recording too short for ICA, skipping."]
         return out, meta
 
-    ica_n = prep.get("ica_n_components", 0.95)
+    ica_n_cfg = prep.get("ica_n_components", "auto")
+    ica_n, ica_n_requested = _resolve_ica_n_components(out, ica_n_cfg)
     ica_seed = prep.get("ica_random_state", 97)
     raw_ica = out.copy().filter(l_freq=1.0, h_freq=None, verbose=False)
     ica = ICA(n_components=ica_n, method="infomax", random_state=ica_seed)
     ica.fit(raw_ica)
-    meta["ica_n_components"] = int(ica.n_components_)
-    meta["ica_converged"] = True
+
+    n_fitted = int(ica.n_components_)
+    eeg_picks = mne.pick_types(out.info, eeg=True, exclude=[])
+    n_eeg = len(eeg_picks)
+    if n_fitted < n_eeg * 0.5:
+        meta.setdefault("warnings", []).append(
+            f"ICA fitted only {n_fitted} components (< 50% of {n_eeg} EEG channels)."
+        )
+
+    pca_var = getattr(ica, "pca_explained_variance_", None)
+    if pca_var is not None and len(pca_var) > 0:
+        cumvar = np.cumsum(pca_var) / np.sum(pca_var)
+        meta["ica_pca_var_ratio_top5"] = [round(float(v), 4) for v in cumvar[:5]]
+
+    try:
+        rank = mne.compute_rank(raw_ica, meg=False, eeg=True)
+        meta["ica_eeg_rank"] = int(rank.get("eeg", rank) if isinstance(rank, dict) else rank)
+    except Exception:
+        meta["ica_eeg_rank"] = None
+
+    meta.update(
+        {
+            "ica_n_components_requested": ica_n_requested,
+            "ica_n_components_fitted": n_fitted,
+            "ica_n_components": n_fitted,
+            "ica_converged": True,
+            "ica_n_iter": int(getattr(ica, "n_iter_", 0) or 0),
+        }
+    )
 
     eog_inds, _ = ica.find_bads_eog(out, ch_name=["Fp1", "Fp2"], threshold=3.0)
+    meta["ica_eog_indices"] = list(eog_inds)
     ica.exclude = list(eog_inds)
     if "ECG" in out.ch_names:
         ecg_inds, _ = ica.find_bads_ecg(out, threshold=3.0, filterlength="auto")
+        meta["ica_ecg_indices"] = list(ecg_inds)
         ica.exclude = list(set(ica.exclude + list(ecg_inds)))
+    meta["ica_excluded_indices"] = list(ica.exclude)
+    meta["ica_n_removed"] = len(ica.exclude)
     ica.apply(out)
     return out, meta
 
 
-def stage_clean(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
+def _asr_window_size_s(asr_model: ASR) -> float | None:
+    for attr in ("windowlen", "window_len", "win_len"):
+        val = getattr(asr_model, attr, None)
+        if val is not None:
+            return float(val)
+    return None
+
+
+def stage_clean(
+    raw: mne.io.BaseRaw,
+    config: dict,
+    raw_before: mne.io.BaseRaw | None = None,
+) -> tuple[mne.io.BaseRaw, dict]:
     prep = _cfg_value(config, "experiment", "preprocessing", default={})
     bc = _cfg_value(config, "experiment", "bad_channels", default=_cfg_value(config, "bad_channels", default={}))
     out = raw.copy()
@@ -139,12 +220,35 @@ def stage_clean(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict
     if prep.get("referencing", False):
         out.set_eeg_reference("average")
 
-    if prep.get("asr", False):
+    asr_enabled = bool(prep.get("asr", False))
+    asr_meta: dict[str, Any] = {"asr_enabled": asr_enabled}
+    if asr_enabled:
         sfreq = int(_cfg_value(config, "features", "sampling_rate", default=500))
         cutoff = prep.get("asr_cutoff", 17)
+        calibration_duration_s = round(out.n_times / out.info["sfreq"], 2)
         asr_model = ASR(sfreq=sfreq, cutoff=cutoff)
         asr_model.fit(out)
         out = asr_model.transform(out)
+        asr_meta.update(
+            {
+                "asr_cutoff": cutoff,
+                "asr_sfreq": sfreq,
+                "asr_calibration_duration_s": calibration_duration_s,
+                "asr_window_size_s": _asr_window_size_s(asr_model),
+                "asr_win_len": getattr(asr_model, "win_len", None),
+                "asr_win_overlap": getattr(asr_model, "win_overlap", None),
+            }
+        )
+        corrected = getattr(asr_model, "n_corrected_samples", None)
+        if corrected is not None:
+            asr_meta["asr_corrected_samples"] = int(corrected)
+    meta["asr"] = asr_meta
+
+    if raw_before is not None:
+        band = compute_band_power_table(raw_before, out)
+        psd = compute_psd_delta(raw_before, out)
+        meta.update(band)
+        meta.update(psd)
 
     return out, meta
 
@@ -179,6 +283,11 @@ def stage_epochs(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.Epochs, dict]:
     else:
         meta["n_epochs_after_ar"] = n_before
         meta["n_epochs_rejected"] = 0
+
+    meta["pct_epochs_rejected"] = round(
+        100 * meta["n_epochs_rejected"] / max(n_before, 1), 2
+    )
+    meta["snr_db"] = round(compute_snr(epochs), 2)
 
     return epochs, meta
 
@@ -240,6 +349,54 @@ STAGE_FUNCS = {
     "clean": stage_clean,
     "epochs": stage_epochs,
 }
+
+
+def _flatten_subject_log(log: dict[str, Any], dataset_name: str, experiment: str) -> None:
+    """Promote key stage metrics to top-level log for CSV export."""
+    log["dataset_name"] = dataset_name
+    log["experiment"] = experiment
+    stages = log.get("stages", {})
+    raw_s = stages.get("raw", {})
+    ica_s = stages.get("ica", {})
+    clean_s = stages.get("clean", {})
+    epoch_s = stages.get("epochs", {})
+
+    for key in ("duration_s", "sfreq", "n_channels", "n_eeg_channels"):
+        if key in raw_s:
+            log[key] = raw_s[key]
+
+    for key in (
+        "ica_n_components_fitted",
+        "ica_n_components",
+        "ica_n_removed",
+        "ica_eeg_rank",
+        "ica_n_iter",
+        "ica_excluded_indices",
+    ):
+        if key in ica_s:
+            log[key] = ica_s[key]
+
+    if "bad_channels" in clean_s:
+        log["bad_channels"] = clean_s["bad_channels"]
+
+    for key in (
+        "n_epochs_before_ar",
+        "n_epochs_after_ar",
+        "n_epochs_rejected",
+        "pct_epochs_rejected",
+        "snr_db",
+    ):
+        if key in epoch_s:
+            log[key] = epoch_s[key]
+
+    for band in ("delta", "theta", "alpha", "beta", "gamma"):
+        for suffix in ("_before", "_after", "_delta"):
+            k = f"{band}{suffix}"
+            if k in clean_s:
+                log[k] = clean_s[k]
+    for key in ("psd_mean_before", "psd_mean_after", "psd_ratio_after_before"):
+        if key in clean_s:
+            log[key] = clean_s[key]
 
 
 def _log_is_valid(log: dict, raw_sha256: str, fingerprint: str) -> bool:
@@ -318,9 +475,15 @@ def preprocess_subject(
         if furthest == "epochs":
             epochs_path = checkpoint_path(dataset_name, experiment, participant_id, "epochs")
             epochs = load_checkpoint(epochs_path, "epochs")
+            from eeg.io import read_json
+
+            log_path = subject_log_path(dataset_name, experiment, participant_id)
+            if log_path.exists():
+                log = read_json(log_path)
             log["status"] = "skipped"
             log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
-            write_json(subject_log_path(dataset_name, experiment, participant_id), log)
+            _flatten_subject_log(log, dataset_name, experiment)
+            write_json(log_path, log)
             return PreprocessResult(participant_id, "skipped", log, epochs)
 
     stage_order = ["raw", "filtered", "ica", "clean", "epochs"]
@@ -363,7 +526,11 @@ def preprocess_subject(
                 if current_raw is None:
                     prev = checkpoint_path(dataset_name, experiment, participant_id, "ica")
                     current_raw = load_checkpoint(prev, "ica")
-                current_raw, meta = stage_clean(current_raw, config)
+                raw_before = None
+                raw_cp = checkpoint_path(dataset_name, experiment, participant_id, "raw")
+                if raw_cp.exists():
+                    raw_before = load_checkpoint(raw_cp, "raw")
+                current_raw, meta = stage_clean(current_raw, config, raw_before=raw_before)
                 save_checkpoint(current_raw, cp)
             elif stage == "epochs":
                 if current_raw is None:
@@ -373,22 +540,11 @@ def preprocess_subject(
                 save_checkpoint(current_epochs, cp)
 
             elapsed = round(time.perf_counter() - stage_t0, 2)
-            log["stages"][stage] = {"runtime_s": elapsed, "status": "ok", **meta}
+            stage_meta = {k: v for k, v in meta.items() if k != "reject_log"}
+            log["stages"][stage] = {"runtime_s": elapsed, "status": "ok", **stage_meta}
             log["stages_completed"].append(stage)
             if meta.get("warnings"):
                 log["warnings"].extend(meta["warnings"])
-            if meta.get("bad_channels"):
-                log["bad_channels"] = meta["bad_channels"]
-            if "ica_n_components" in meta and meta["ica_n_components"] is not None:
-                log["ica_n_components"] = meta["ica_n_components"]
-            if meta.get("ica_converged") is not None:
-                log["ica_converged"] = meta["ica_converged"]
-            if "n_epochs_before_ar" in meta:
-                log["n_epochs_before_ar"] = meta["n_epochs_before_ar"]
-            if "n_epochs_after_ar" in meta:
-                log["n_epochs_after_ar"] = meta["n_epochs_after_ar"]
-            if "n_epochs_rejected" in meta:
-                log["n_epochs_rejected"] = meta["n_epochs_rejected"]
 
         except Exception as exc:
             log["stages"][stage] = {
@@ -403,5 +559,6 @@ def preprocess_subject(
 
     log["status"] = "ok"
     log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
+    _flatten_subject_log(log, dataset_name, experiment)
     write_json(subject_log_path(dataset_name, experiment, participant_id), log)
     return PreprocessResult(participant_id, "ok", log, current_epochs)

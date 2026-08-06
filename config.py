@@ -28,7 +28,7 @@ NOTCH_FREQ = [50, 100, 150]     # Set to None if not needed (e.g., 50.0 for EU)
 # Preprocessing (production defaults — aligned with Miltiadous et al. ds004504)
 ASR_CUTOFF = 17
 ICA_RANDOM_STATE = 97
-ICA_N_COMPONENTS = 0.95
+ICA_N_COMPONENTS = "auto"
 BAD_CHANNEL_FLAT_STD = 1e-15
 BAD_CHANNEL_NOISY_Z = 5.0
 

@@ -34,6 +34,10 @@ def preprocessed_dir(dataset: str, experiment: str) -> Path:
     return experiment_dir(dataset, experiment, "preprocessed")
 
 
+def qc_report_dir(dataset: str, experiment: str) -> Path:
+    return preprocessed_dir(dataset, experiment) / "qc"
+
+
 def features_dir(dataset: str, experiment: str) -> Path:
     return experiment_dir(dataset, experiment, "features")
 

@@ -144,6 +144,206 @@ env = snapshot_environment()
 print(CONFIG)
 '''
 
+PREPROCESS_PIPELINE_CONFIG = '''\
+# --- Pipeline configuration (edit before running) ---
+MODE = "test"          # "inspect" | "test" | "full"
+DATASET = "dataset2"   # "dataset2" | "dataset3" | "all"
+EXPERIMENT = "baseline"
+FORCE = False
+WORKERS = 2
+TEST_SUBJECTS = 5      # used when MODE == "test"
+INSPECT_SUBJECT = 1    # subject number when MODE == "inspect"
+
+VALID_MODES = {"inspect", "test", "full"}
+if MODE not in VALID_MODES:
+    raise ValueError(f"MODE must be one of {VALID_MODES}, got {MODE!r}")
+
+TEST_OUTPUT = Path("/kaggle/working/test_output")
+'''
+
+PREPROCESS_LOAD_CONFIG = '''\
+from eeg.config import load_experiment, resolve_dataset
+from eeg.repro import init_repro, snapshot_environment
+
+dataset_specs = resolve_dataset(DATASET)
+config = load_experiment(EXPERIMENT)
+
+CONFIG = {
+    "mode": MODE,
+    "dataset": DATASET,
+    "datasets": [ds.name for ds in dataset_specs],
+    "experiment": EXPERIMENT,
+    "force": FORCE,
+    "workers": WORKERS,
+    "test_subjects": TEST_SUBJECTS,
+    "inspect_subject": INSPECT_SUBJECT,
+    "seed": config.get("training", {}).get("random_state", 42),
+}
+repro = init_repro(CONFIG["seed"])
+env = snapshot_environment()
+print(CONFIG)
+'''
+
+PREPROCESS_RUN_CELL = '''\
+import json
+import time
+from datetime import datetime, timezone
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+from eeg.config import experiment_metadata
+from eeg.io import write_json
+from eeg.qc import preprocessing_metrics
+from eeg.runner import summarize_batch
+from eeg.visualization import plot_preprocessing_panels
+from scripts.preprocess_dataset import run_preprocess
+
+QC_PLOTS = False  # set True for per-subject PNGs in full/test mode
+
+
+def _subject_nums(ds):
+    if MODE == "inspect":
+        return [INSPECT_SUBJECT]
+    return list(range(1, TEST_SUBJECTS + 1))
+
+
+def _qc_subject(ds, subject_num, out_dir):
+    metrics = preprocessing_metrics(ds, subject_num, EXPERIMENT)
+    plot_path = plot_preprocessing_panels(ds, subject_num, EXPERIMENT, out_dir)
+    print(
+        f"  {metrics['participant_id']}: bad_ch={metrics['n_bad_channels']} "
+        f"rejected={metrics['n_epochs_rejected']}/{metrics['n_epochs_before_ar']} "
+        f"→ {plot_path.name}"
+    )
+    return metrics, plot_path
+
+
+summary = {
+    "mode": MODE,
+    "dataset": DATASET,
+    "experiment": EXPERIMENT,
+    "force": FORCE,
+    "started_at": datetime.now(timezone.utc).isoformat(),
+}
+t0 = time.perf_counter()
+
+if MODE == "inspect":
+    out_root = TEST_OUTPUT / "inspect"
+    out_root.mkdir(parents=True, exist_ok=True)
+    summary["subjects"] = []
+
+    for ds in dataset_specs:
+        ds_out = out_root / ds.name
+        ds_out.mkdir(parents=True, exist_ok=True)
+        print(f"\\n[{ds.name}] preprocess + inspect subject {INSPECT_SUBJECT}")
+        run_preprocess(
+            ds.name,
+            EXPERIMENT,
+            workers=1,
+            force=FORCE,
+            limit=None,
+            subject=f"sub-{INSPECT_SUBJECT:03d}",
+            qc_plots=True,
+        )
+        metrics, _ = _qc_subject(ds, INSPECT_SUBJECT, ds_out)
+        summary["subjects"].append(metrics)
+
+elif MODE == "test":
+    out_root = TEST_OUTPUT / "test"
+    out_root.mkdir(parents=True, exist_ok=True)
+    summary["datasets"] = {}
+
+    for ds in dataset_specs:
+        ds_out = out_root / ds.name
+        ds_out.mkdir(parents=True, exist_ok=True)
+        print(f"\\n[{ds.name}] preprocessing first {TEST_SUBJECTS} subjects...")
+        results = run_preprocess(
+            ds.name, EXPERIMENT, workers=WORKERS, force=FORCE, limit=TEST_SUBJECTS, qc_plots=QC_PLOTS
+        )
+        batch = summarize_batch(results)
+        summary["datasets"][ds.name] = {
+            "completed": batch.completed,
+            "skipped": batch.skipped,
+            "failed": batch.failed,
+            "subjects": [
+                {
+                    "participant_id": r.log.get("participant_id"),
+                    "status": r.status,
+                    "runtime_seconds": r.log.get("runtime_seconds"),
+                    "n_bad_channels": len(r.log.get("bad_channels", [])),
+                    "n_epochs_rejected": r.log.get("n_epochs_rejected"),
+                }
+                for r in results
+            ],
+        }
+        print(
+            f"[{ds.name}] completed={batch.completed} "
+            f"skipped={batch.skipped} failed={batch.failed}"
+        )
+
+        print(f"[{ds.name}] QC plots...")
+        for sn in _subject_nums(ds):
+            _qc_subject(ds, sn, ds_out)
+
+elif MODE == "full":
+    summary["datasets"] = {}
+    all_results = []
+
+    for ds in dataset_specs:
+        print(f"\\n[{ds.name}] full preprocessing run...")
+        results = run_preprocess(
+            ds.name, EXPERIMENT, workers=WORKERS, force=FORCE, limit=None, qc_plots=QC_PLOTS
+        )
+        batch = summarize_batch(results)
+        all_results.extend(results)
+        summary["datasets"][ds.name] = {
+            "completed": batch.completed,
+            "skipped": batch.skipped,
+            "failed": batch.failed,
+            "n_subjects": len(results),
+        }
+        print(
+            f"[{ds.name}] completed={batch.completed} "
+            f"skipped={batch.skipped} failed={batch.failed}"
+        )
+
+    runtimes = [r.log.get("runtime_seconds", 0) for r in all_results if r.log.get("runtime_seconds")]
+    summary["mean_runtime_seconds"] = round(sum(runtimes) / len(runtimes), 2) if runtimes else None
+    summary["config"] = experiment_metadata(
+        DATASET, EXPERIMENT, config, n_processed=len(all_results)
+    )
+
+else:
+    raise ValueError(f"Unknown MODE: {MODE}")
+
+summary["elapsed_seconds"] = round(time.perf_counter() - t0, 2)
+summary["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+if MODE == "full":
+    meta_path = Path("data") / "preprocess_full_summary.json"
+else:
+    meta_path = TEST_OUTPUT / f"preprocess_{MODE}_summary.json"
+meta_path.parent.mkdir(parents=True, exist_ok=True)
+write_json(meta_path, summary)
+print(f"\\nSummary → {meta_path}")
+print(json.dumps(summary, indent=2, default=str))
+'''
+
+PREPROCESS_SAVE = '''\
+# Publish artifacts for the next notebook (full mode only)
+if MODE == "full" and Path("/kaggle/input").exists():
+    out = Path("/kaggle/working/pipeline_output")
+    src = Path("data")
+    if src.exists():
+        shutil.copytree(src, out / "data", dirs_exist_ok=True)
+        print(f"Output ready: {out}")
+        print("Save Version → Save output as new Kaggle Dataset, then attach in the next notebook.")
+elif MODE != "full":
+    print(f"MODE={MODE!r}: skipping Kaggle dataset publish (use MODE='full' for production output).")
+'''
+
 # Per-notebook input hints (injected into markdown)
 INPUT_HINTS = {
     "00": "**Inputs:** `RAW_EEG_INPUT` only.",
@@ -193,15 +393,26 @@ for spec in resolve_dataset("all"):
         "01",
         "",
         [
-            ("markdown", "# 01 — Preprocessing\n\nRuns batch preprocessing on Kaggle CPUs."),
-            ("code", CONFIG_CELL),
-            ("code", '''\
-from scripts.preprocess_dataset import run_preprocess
-
-run_preprocess(CONFIG["dataset"], CONFIG["experiment"], workers=2, limit=None)
-# Backlog: raise h_freq to 45 Hz in experiments/baseline.yaml
-'''),
+            (
+                "markdown",
+                "# 01 — Preprocessing\n\n"
+                "Mode-based preprocessing pipeline for fast iteration and production runs.\n\n"
+                "| Mode | Purpose | Output |\n"
+                "|------|---------|--------|\n"
+                "| **inspect** | One subject, interactive QC plots, debugging | "
+                "`/kaggle/working/test_output/inspect/` |\n"
+                "| **test** | First N subjects, validation metrics, regression check | "
+                "`/kaggle/working/test_output/test/` |\n"
+                "| **full** | Entire dataset, persisted checkpoints | `data/` → publish as Kaggle Dataset |\n\n"
+                "**Flow:** Configuration → Environment setup → Load config → Branch on `MODE` → "
+                "(full only) publish artifacts.",
+            ),
+            ("code", PREPROCESS_PIPELINE_CONFIG),
+            ("code", PREPROCESS_LOAD_CONFIG),
+            ("code", PREPROCESS_RUN_CELL),
+            ("code", PREPROCESS_SAVE),
         ],
+        save=False,
     ),
     "02_epoching.ipynb": _nb_cells(
         "02",
