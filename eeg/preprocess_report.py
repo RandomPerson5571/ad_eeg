@@ -24,7 +24,7 @@ DISTRIBUTION_METRICS = [
     "snr_db",
     "n_bad_channels",
     "ica_eeg_rank",
-] + [f"{b}_delta" for b in BAND_RANGES]
+] + [f"{b}_delta_uv2" for b in BAND_RANGES]
 
 
 def load_subject_logs(dataset_name: str, experiment: str) -> list[dict[str, Any]]:
@@ -375,7 +375,7 @@ def compare_experiments(
         ("pct_epochs_rejected", "Epoch rejection % (median)"),
         ("runtime_seconds", "Runtime (median)"),
         ("ica_n_removed", "ICA removed (median)"),
-        ("alpha_delta", "Mean alpha Δ"),
+        ("alpha_delta_uv2", "Mean alpha Δ (µV²)"),
     ]
     rows = []
     for metric_key, label in compare_metrics:
@@ -388,7 +388,7 @@ def compare_experiments(
             with summary_path.open(encoding="utf-8") as f:
                 summary = json.load(f)
             dist = summary.get("distributions", {}).get(metric_key, {})
-            if metric_key == "alpha_delta":
+            if metric_key == "alpha_delta_uv2":
                 row[exp] = dist.get("mean")
             else:
                 row[exp] = dist.get("median")

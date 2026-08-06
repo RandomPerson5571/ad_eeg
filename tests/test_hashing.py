@@ -18,3 +18,10 @@ def test_config_fingerprint_changes_with_experiment():
     baseline = config_fingerprint(load_experiment("baseline"))
     fast = config_fingerprint(load_experiment("fast"))
     assert baseline != fast
+
+
+def test_config_fingerprint_changes_with_pipeline_version():
+    cfg = load_experiment("baseline")
+    cfg_v1 = {**cfg, "experiment": {**cfg["experiment"], "pipeline_version": 1}}
+    cfg_v2 = {**cfg, "experiment": {**cfg["experiment"], "pipeline_version": 2}}
+    assert config_fingerprint(cfg_v1) != config_fingerprint(cfg_v2)

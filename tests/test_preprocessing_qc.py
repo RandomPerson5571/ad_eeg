@@ -13,13 +13,12 @@ from eeg.preprocess_report import (
     compare_experiments,
     compute_distribution,
     detect_outliers,
-    load_subject_logs,
     render_dataset_report_md,
     render_html_dashboard,
     write_preprocess_report,
 )
 from eeg.preprocessing import _resolve_ica_n_components
-from eeg.qc import compute_band_power_table, log_to_summary_row
+from eeg.qc import backfill_spectral_qc, compute_band_power_table, log_to_summary_row
 from eeg.repro import preprocessing_fingerprint
 
 
@@ -45,12 +44,14 @@ def _sample_log(participant_id: str = "sub-001", status: str = "ok") -> dict:
             },
             "clean": {
                 "bad_channels": ["Fp1"],
-                "delta_before": 1.0,
-                "delta_after": 0.9,
-                "delta_delta": -0.1,
-                "alpha_before": 2.0,
-                "alpha_after": 2.2,
-                "alpha_delta": 0.2,
+                "delta_before_uv2": 1.0,
+                "delta_after_uv2": 0.9,
+                "delta_delta_uv2": -0.1,
+                "alpha_before_uv2": 12.48,
+                "alpha_after_uv2": 11.93,
+                "alpha_delta_uv2": -0.55,
+                "alpha_before_log10": -7.42,
+                "alpha_after_log10": -7.44,
             },
             "epochs": {
                 "n_epochs_before_ar": 100,
@@ -80,6 +81,9 @@ def test_log_to_summary_row():
     assert row["ica_n_removed"] == 2
     assert row["pct_epochs_rejected"] == 10.0
     assert row["n_bad_channels"] == 1
+    assert row["alpha_before_uv2"] == 12.48
+    assert row["alpha_delta_uv2"] == -0.55
+    assert row["alpha_before_log10"] == -7.42
 
 
 def test_compute_distribution():
@@ -168,7 +172,7 @@ def test_compare_experiments(tmp_path, monkeypatch):
                 "pct_epochs_rejected": {"median": 10.0 if exp == "baseline" else 5.0},
                 "runtime_seconds": {"median": 40.0},
                 "ica_n_removed": {"median": 2.0},
-                "alpha_delta": {"mean": 0.1},
+                "alpha_delta_uv2": {"mean": 0.1},
             }
         }
         (qc_dir / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -194,6 +198,60 @@ def test_compute_band_power_table():
     raw_a = mne.io.RawArray(data, info)
     raw_b = mne.io.RawArray(data * 0.5, info)
     result = compute_band_power_table(raw_a, raw_b)
-    assert "delta_before" in result
-    assert "alpha_delta" in result
-    assert result["band_power"]["before"]["delta"] > 0
+    assert result["alpha_before_uv2"] > 0
+    assert result["alpha_delta_uv2"] != 0
+    assert np.isfinite(result["alpha_before_log10"])
+    assert result["alpha_before_log10"] < 0
+    assert result["band_power"]["before_uv2"]["delta"] > 0
+
+
+def test_backfill_spectral_qc(tmp_path, monkeypatch):
+    import mne
+
+    from eeg.io import save_checkpoint
+    import eeg.paths as paths  # noqa: F401 — ensure paths module loaded
+
+    dataset = "eyesclosed"
+    experiment = "baseline"
+    participant_id = "sub-001"
+
+    pre_dir = tmp_path / "data" / "preprocessed" / dataset / experiment
+    pre_dir.mkdir(parents=True)
+    logs_dir = pre_dir / "logs"
+    logs_dir.mkdir(parents=True)
+
+    rng = np.random.default_rng(0)
+    data = rng.standard_normal((4, 2000)) * 1e-6
+    info = mne.create_info(["E1", "E2", "E3", "E4"], sfreq=500, ch_types="eeg")
+    raw = mne.io.RawArray(data, info)
+    clean = mne.io.RawArray(data * 0.8, info)
+
+    suffix = {"raw": "_raw.fif", "clean": "_clean_raw.fif"}
+
+    def _subject_log_path(d, e, pid, stage="preprocessed"):
+        return logs_dir / f"{pid}.json"
+
+    def _resolve_checkpoint_path(d, e, pid, stage):
+        if stage not in suffix:
+            return pre_dir / f"{pid}_missing_{stage}.fif"
+        return pre_dir / f"{pid}{suffix[stage]}"
+
+    monkeypatch.setattr("eeg.qc.subject_log_path", _subject_log_path)
+    monkeypatch.setattr("eeg.qc.resolve_checkpoint_path", _resolve_checkpoint_path)
+    monkeypatch.setattr("eeg.preprocessing.subject_log_path", _subject_log_path)
+
+    save_checkpoint(raw, pre_dir / f"{participant_id}_raw.fif")
+    save_checkpoint(clean, pre_dir / f"{participant_id}_clean_raw.fif")
+
+    log = _sample_log(participant_id)
+    log["stages"]["clean"] = {"bad_channels": [], "alpha_before": 0.0}
+    (logs_dir / f"{participant_id}.json").write_text(json.dumps(log), encoding="utf-8")
+
+    patched = backfill_spectral_qc(dataset, experiment)
+    assert patched == [participant_id]
+
+    updated = json.loads((logs_dir / f"{participant_id}.json").read_text(encoding="utf-8"))
+    clean_stage = updated["stages"]["clean"]
+    assert "alpha_before" not in clean_stage
+    assert clean_stage["alpha_before_uv2"] > 0
+    assert updated["alpha_before_uv2"] > 0

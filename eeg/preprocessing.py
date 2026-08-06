@@ -45,6 +45,27 @@ def _cfg_value(config: dict, *keys, default=None):
     return cur
 
 
+_LEGACY_1020_ALIASES = {"T3": "T7", "T4": "T8", "T5": "P7", "T6": "P8"}
+
+
+def _standardize_channel_names(raw: mne.io.BaseRaw) -> None:
+    """Map legacy 10-20 aliases (T3/T4/T5/T6) to standard_1020 names."""
+    mapping = {ch: _LEGACY_1020_ALIASES[ch] for ch in raw.ch_names if ch in _LEGACY_1020_ALIASES}
+    if mapping:
+        raw.rename_channels(mapping)
+
+
+def apply_standard_montage(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
+    """Standardize channel names and apply 10-20 montage."""
+    _standardize_channel_names(raw)
+    raw.set_montage("standard_1020", on_missing="warn")
+    picks = mne.pick_types(raw.info, eeg=True, exclude=[])
+    meta: dict[str, Any] = {"montage_set": True, "n_eeg_channels": len(picks)}
+    if len(picks) != 19:
+        meta["warnings"] = [f"Expected 19 EEG channels, found {len(picks)}."]
+    return raw, meta
+
+
 def detect_bad_channels(raw, flat_std=1e-15, noisy_z=5.0):
     picks = mne.pick_types(raw.info, eeg=True, exclude=[])
     if len(picks) == 0:
@@ -70,12 +91,12 @@ def stage_raw(raw_path: Path, sfreq: int) -> tuple[mne.io.BaseRaw, dict]:
     raw = read_eeg_data(raw_path, sfreq=sfreq)
     if raw.info["sfreq"] != sfreq:
         raw.resample(sfreq)
-    picks = mne.pick_types(raw.info, eeg=True, exclude=[])
+    _, montage_meta = apply_standard_montage(raw)
     meta = {
         "duration_s": round(raw.n_times / raw.info["sfreq"], 2),
         "sfreq": float(raw.info["sfreq"]),
         "n_channels": len(raw.ch_names),
-        "n_eeg_channels": len(picks),
+        **montage_meta,
     }
     return raw, meta
 
@@ -83,6 +104,7 @@ def stage_raw(raw_path: Path, sfreq: int) -> tuple[mne.io.BaseRaw, dict]:
 def stage_filtered(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
     prep = _cfg_value(config, "experiment", "preprocessing", default={})
     filt = _cfg_value(config, "experiment", "filtering", default=_cfg_value(config, "filtering", default={}))
+    bc = _cfg_value(config, "experiment", "bad_channels", default=_cfg_value(config, "bad_channels", default={}))
     out = raw.copy()
     meta: dict[str, Any] = {
         "freq_filter": bool(prep.get("freq_filter", True)),
@@ -90,16 +112,28 @@ def stage_filtered(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, d
         "l_freq": filt.get("l_freq", 0.5),
         "h_freq": filt.get("h_freq", 40),
         "notch_freq": filt.get("notch_freq"),
+        "bad_channels_detected": [],
     }
+    if prep.get("bad_channels", False):
+        bads = detect_bad_channels(
+            out,
+            flat_std=bc.get("flat_std", 1e-15),
+            noisy_z=bc.get("noisy_z", 5.0),
+        )
+        out.info["bads"] = list(set(out.info.get("bads", []) + bads))
+        meta["bad_channels_detected"] = bads
+
+    good_picks = mne.pick_types(out.info, eeg=True, exclude="bads")
     if prep.get("freq_filter", True):
         out.filter(
             l_freq=filt.get("l_freq", 0.5),
             h_freq=filt.get("h_freq", 40),
             fir_design="firwin",
             filter_length="auto",
+            picks=good_picks,
         )
     if prep.get("notch_filter") and filt.get("notch_freq"):
-        out.notch_filter(freqs=filt["notch_freq"])
+        out.notch_filter(freqs=filt["notch_freq"], picks=good_picks)
     return out, meta
 
 
@@ -139,10 +173,14 @@ def stage_ica(raw: mne.io.BaseRaw, config: dict) -> tuple[mne.io.BaseRaw, dict]:
         meta["warnings"] = ["Recording too short for ICA, skipping."]
         return out, meta
 
+    bads_excluded = list(out.info.get("bads", []))
+    meta["ica_bad_channels_excluded"] = bads_excluded
+
     ica_n_cfg = prep.get("ica_n_components", "auto")
     ica_n, ica_n_requested = _resolve_ica_n_components(out, ica_n_cfg)
     ica_seed = prep.get("ica_random_state", 97)
-    raw_ica = out.copy().filter(l_freq=1.0, h_freq=None, verbose=False)
+    ica_picks = mne.pick_types(out.info, eeg=True, exclude="bads")
+    raw_ica = out.copy().filter(l_freq=1.0, h_freq=None, picks=ica_picks, verbose=False)
     ica = ICA(n_components=ica_n, method="infomax", random_state=ica_seed)
     ica.fit(raw_ica)
 
@@ -202,25 +240,17 @@ def stage_clean(
     raw_before: mne.io.BaseRaw | None = None,
 ) -> tuple[mne.io.BaseRaw, dict]:
     prep = _cfg_value(config, "experiment", "preprocessing", default={})
-    bc = _cfg_value(config, "experiment", "bad_channels", default=_cfg_value(config, "bad_channels", default={}))
     out = raw.copy()
-    meta: dict[str, Any] = {"bad_channels": []}
+    meta: dict[str, Any] = {}
 
-    if prep.get("bad_channels", False):
-        bads = detect_bad_channels(
-            out,
-            flat_std=bc.get("flat_std", 1e-15),
-            noisy_z=bc.get("noisy_z", 5.0),
-        )
-        meta["bad_channels"] = bads
-        if bads:
-            out.info["bads"] = list(set(out.info.get("bads", []) + bads))
-            out.interpolate_bads(reset_bads=True)
-
-    if prep.get("referencing", False):
-        out.set_eeg_reference("average")
+    bads = list(out.info.get("bads", []))
+    meta["bad_channels"] = bads
+    if prep.get("bad_channels", False) and bads:
+        out.interpolate_bads(reset_bads=True)
+        meta["bad_channels_interpolated"] = bads
 
     asr_enabled = bool(prep.get("asr", False))
+    referencing = bool(prep.get("referencing", False))
     asr_meta: dict[str, Any] = {"asr_enabled": asr_enabled}
     if asr_enabled:
         sfreq = int(_cfg_value(config, "features", "sampling_rate", default=500))
@@ -243,6 +273,10 @@ def stage_clean(
         if corrected is not None:
             asr_meta["asr_corrected_samples"] = int(corrected)
     meta["asr"] = asr_meta
+    meta["asr_before_car"] = asr_enabled and referencing
+
+    if referencing:
+        out.set_eeg_reference("average")
 
     if raw_before is not None:
         band = compute_band_power_table(raw_before, out)
@@ -324,13 +358,14 @@ def preprocess_EEG(
                 "erp": erp,
                 "fle": fle,
             },
-            "filtering": {"l_freq": 0.5, "h_freq": 40, "notch_freq": [50, 100, 150]},
+            "filtering": {"l_freq": 0.5, "h_freq": 40, "notch_freq": [50]},
             "epoching": {"length": 4.0, "overlap": 2.0},
         },
         "features": {"sampling_rate": sfreq},
     }
 
-    filtered, _ = stage_filtered(eeg_raw, config) if freq_filter or notch_filter else (eeg_raw.copy(), {})
+    out, _ = apply_standard_montage(eeg_raw.copy())
+    filtered, _ = stage_filtered(out, config)
     ica_out, _ = stage_ica(filtered, config) if run_ica else (filtered, {})
     clean, clean_meta = stage_clean(ica_out, config)
     epochs, epoch_meta = stage_epochs(clean, config)
@@ -357,6 +392,7 @@ def _flatten_subject_log(log: dict[str, Any], dataset_name: str, experiment: str
     log["experiment"] = experiment
     stages = log.get("stages", {})
     raw_s = stages.get("raw", {})
+    filtered_s = stages.get("filtered", {})
     ica_s = stages.get("ica", {})
     clean_s = stages.get("clean", {})
     epoch_s = stages.get("epochs", {})
@@ -378,6 +414,8 @@ def _flatten_subject_log(log: dict[str, Any], dataset_name: str, experiment: str
 
     if "bad_channels" in clean_s:
         log["bad_channels"] = clean_s["bad_channels"]
+    elif "bad_channels_detected" in filtered_s:
+        log["bad_channels"] = filtered_s["bad_channels_detected"]
 
     for key in (
         "n_epochs_before_ar",
@@ -390,11 +428,11 @@ def _flatten_subject_log(log: dict[str, Any], dataset_name: str, experiment: str
             log[key] = epoch_s[key]
 
     for band in ("delta", "theta", "alpha", "beta", "gamma"):
-        for suffix in ("_before", "_after", "_delta"):
+        for suffix in ("_before_uv2", "_after_uv2", "_delta_uv2", "_before_log10", "_after_log10"):
             k = f"{band}{suffix}"
             if k in clean_s:
                 log[k] = clean_s[k]
-    for key in ("psd_mean_before", "psd_mean_after", "psd_ratio_after_before"):
+    for key in ("psd_mean_before_uv2", "psd_mean_after_uv2", "psd_ratio_after_before"):
         if key in clean_s:
             log[key] = clean_s[key]
 

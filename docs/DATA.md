@@ -81,17 +81,7 @@ data/
 
 ### Experiment configs
 
-Preprocessing parameters live in `experiments/` (not CLI flags):
-
-```
-experiments/
-  baseline.yaml   # full pipeline (notch, ASR, ICA)
-  fast.yaml       # bandpass + epoch + AutoReject only
-  ica95.yaml      # variant ICA/ASR settings
-  no_asr.yaml     # ablation: no ASR
-  no_ref.yaml     # ablation: no re-referencing
-  no_overlap.yaml # ablation: non-overlapping epochs
-```
+Preprocessing parameters live in `experiments/` (not CLI flags). See [PREPROCESSING.md](PREPROCESSING.md) for stage-by-stage details and all experiment presets.
 
 Each run writes `metadata.json` with MNE/Python versions, git commit, and config fingerprint.
 

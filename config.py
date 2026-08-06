@@ -23,7 +23,7 @@ DATASET_TASKS = {
 SAMPLING_RATE = 500   # Hz
 
 # Filtering
-NOTCH_FREQ = [50, 100, 150]     # Set to None if not needed (e.g., 50.0 for EU)
+NOTCH_FREQ = [50]     # Set to None if not needed (e.g., 50.0 for EU)
 
 # Preprocessing (production defaults — aligned with Miltiadous et al. ds004504)
 ASR_CUTOFF = 17

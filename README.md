@@ -115,6 +115,7 @@ Reports are saved under `data/results/{dataset}/{experiment}/qc/`.
 ## Documentation
 
 - [Data guide](docs/DATA.md) — source dataset, layout, Zenodo artifacts
+- [Preprocessing pipeline](docs/PREPROCESSING.md) — staged pipeline, stages, config, QC, checkpoints
 - [Methodology](docs/METHODOLOGY.md) — preprocessing, features, evaluation
 - [Pipeline audit](docs/PIPELINE_AUDIT.md) — literature review of preprocessing and feature extraction
 - [Reproducibility](docs/REPRODUCIBILITY.md) — exact commands and seeds

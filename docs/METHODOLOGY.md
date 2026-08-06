@@ -23,7 +23,9 @@ Each dataset is processed and trained **separately** via `--dataset eyesclosed` 
 
 ## Preprocessing protocol (staged checkpoints)
 
-Experiment configs in `experiments/` define preprocessing. Default `baseline`:
+See **[PREPROCESSING.md](PREPROCESSING.md)** for the full pipeline reference: stage-by-stage signal processing, experiment configs, checkpoint layout, QC, and resume behavior.
+
+Summary (default `baseline` experiment):
 
 1. Load raw → `sub-NNN_raw.fif`
 2. Band-pass 0.5–40 Hz + notch → `sub-NNN_filtered_raw.fif`
@@ -31,16 +33,10 @@ Experiment configs in `experiments/` define preprocessing. Default `baseline`:
 4. Bad channels + average ref + ASR → `sub-NNN_clean_raw.fif`
 5. Epoching (4 s, 2 s overlap) + AutoReject → `sub-NNN_epo.fif`
 
-Stages are resumable: each subject log stores `raw_sha256` and `config_fingerprint`.
-
-For quick dev: `--experiment fast` (bandpass + epoch + AR only).
-
 ```bash
 python scripts/preprocess_dataset.py --dataset eyesclosed --experiment baseline
 python scripts/extract_features.py --dataset eyesclosed --experiment baseline
 ```
-
-Parameters are snapshotted in `data/preprocessed/{dataset}/{experiment}/metadata.json`.
 
 ## Feature extraction
 

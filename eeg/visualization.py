@@ -118,9 +118,9 @@ def plot_preprocessing_panels_from_checkpoints(
         f"Runtime: {metrics.get('runtime_seconds', 'n/a')} s",
     ]
     band_line = " | ".join(
-        f"{b[0].upper()}: {metrics.get(f'{b}_delta', 'n/a')}"
+        f"{b[0].upper()}: {metrics.get(f'{b}_delta_uv2', 'n/a')}"
         for b in ("delta", "theta", "alpha", "beta", "gamma")
-        if metrics.get(f"{b}_delta") is not None
+        if metrics.get(f"{b}_delta_uv2") is not None
     )
     if band_line:
         lines.append(f"Band Δ: {band_line}")
