@@ -13,7 +13,7 @@ import pandas as pd
 from eeg.config import load_experiment
 from eeg.io import write_json
 from eeg.paths import qc_report_dir, subject_log_path
-from eeg.qc import BAND_RANGES, log_to_summary_row
+from eeg.qc import BAND_RANGES, backfill_spectral_qc, log_to_summary_row
 from eeg.repro import preprocessing_fingerprint
 
 DISTRIBUTION_METRICS = [
@@ -328,6 +328,7 @@ def write_preprocess_report(
     out_dir = qc_report_dir(dataset_name, experiment)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    backfill_spectral_qc(dataset_name, experiment)
     logs = load_subject_logs(dataset_name, experiment)
     df = build_summary_dataframe(logs)
     summary = build_summary_json(df, dataset_name, experiment, config)

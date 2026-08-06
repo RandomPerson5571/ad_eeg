@@ -188,16 +188,20 @@ PREPROCESS_RUN_CELL = '''\
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 
+from eeg.cli import subject_num_from_id
 from eeg.config import experiment_metadata
 from eeg.io import write_json
-from eeg.qc import preprocessing_metrics
+from eeg.paths import qc_report_dir
+from eeg.preprocess_report import write_preprocess_report
+from eeg.qc import BAND_RANGES, backfill_spectral_qc, preprocessing_metrics
 from eeg.runner import summarize_batch
-from eeg.visualization import plot_preprocessing_panels
+from eeg.visualization import plot_preprocessing_panels_from_checkpoints
 from scripts.preprocess_dataset import run_preprocess
 
 QC_PLOTS = False  # set True for per-subject PNGs in full/test mode
@@ -209,13 +213,45 @@ def _subject_nums(ds):
     return list(range(1, TEST_SUBJECTS + 1))
 
 
+def _spectral_summary(metrics: dict) -> dict:
+    """Extract µV²/Hz band-power fields for notebook summaries."""
+    out = {}
+    for band in BAND_RANGES:
+        if metrics.get(f"{band}_before_uv2") is not None:
+            out[f"{band}_before_uv2"] = metrics[f"{band}_before_uv2"]
+        if metrics.get(f"{band}_delta_uv2") is not None:
+            out[f"{band}_delta_uv2"] = metrics[f"{band}_delta_uv2"]
+    return out
+
+
+def _refresh_dataset_qc(ds, limit=None):
+    """Backfill spectral QC from checkpoints and regenerate summary.csv."""
+    patched = backfill_spectral_qc(ds.name, EXPERIMENT, limit=limit)
+    report_paths = write_preprocess_report(
+        ds.name, EXPERIMENT, config=config, qc_plots=QC_PLOTS, dataset_spec=ds
+    )
+    if patched:
+        print(f"  [{ds.name}] backfilled spectral QC for {len(patched)} subject(s)")
+    print(f"  [{ds.name}] QC report → {report_paths['summary_csv']}")
+    return report_paths
+
+
 def _qc_subject(ds, subject_num, out_dir):
     metrics = preprocessing_metrics(ds, subject_num, EXPERIMENT)
-    plot_path = plot_preprocessing_panels(ds, subject_num, EXPERIMENT, out_dir)
+    plot_path = plot_preprocessing_panels_from_checkpoints(
+        ds, subject_num, EXPERIMENT, out_dir
+    )
+    alpha = metrics.get("alpha_before_uv2")
+    alpha_d = metrics.get("alpha_delta_uv2")
+    spectral = (
+        f" alpha={alpha:.2f}µV² Δ={alpha_d:+.2f}"
+        if alpha is not None and alpha_d is not None
+        else ""
+    )
     print(
         f"  {metrics['participant_id']}: bad_ch={metrics['n_bad_channels']} "
-        f"rejected={metrics['n_epochs_rejected']}/{metrics['n_epochs_before_ar']} "
-        f"→ {plot_path.name}"
+        f"rejected={metrics['n_epochs_rejected']}/{metrics['n_epochs_before_ar']}"
+        f"{spectral} → {plot_path.name}"
     )
     return metrics, plot_path
 
@@ -247,8 +283,10 @@ if MODE == "inspect":
             subject=f"sub-{INSPECT_SUBJECT:03d}",
             qc_plots=True,
         )
+        _refresh_dataset_qc(ds, limit=INSPECT_SUBJECT)
         metrics, _ = _qc_subject(ds, INSPECT_SUBJECT, ds_out)
-        summary["subjects"].append(metrics)
+        summary["subjects"].append({**metrics, **_spectral_summary(metrics)})
+        summary["qc_report"] = str(qc_report_dir(ds.name, EXPERIMENT) / "summary.csv")
 
 elif MODE == "test":
     out_root = TEST_OUTPUT / "test"
@@ -262,11 +300,13 @@ elif MODE == "test":
         results = run_preprocess(
             ds.name, EXPERIMENT, workers=WORKERS, force=FORCE, limit=TEST_SUBJECTS, qc_plots=QC_PLOTS
         )
+        report_paths = _refresh_dataset_qc(ds, limit=TEST_SUBJECTS)
         batch = summarize_batch(results)
         summary["datasets"][ds.name] = {
             "completed": batch.completed,
             "skipped": batch.skipped,
             "failed": batch.failed,
+            "qc_report": str(report_paths["summary_csv"]),
             "subjects": [
                 {
                     "participant_id": r.log.get("participant_id"),
@@ -274,6 +314,13 @@ elif MODE == "test":
                     "runtime_seconds": r.log.get("runtime_seconds"),
                     "n_bad_channels": len(r.log.get("bad_channels", [])),
                     "n_epochs_rejected": r.log.get("n_epochs_rejected"),
+                    **_spectral_summary(
+                        preprocessing_metrics(
+                            ds,
+                            subject_num_from_id(r.log.get("participant_id")),
+                            EXPERIMENT,
+                        )
+                    ),
                 }
                 for r in results
             ],
@@ -296,6 +343,7 @@ elif MODE == "full":
         results = run_preprocess(
             ds.name, EXPERIMENT, workers=WORKERS, force=FORCE, limit=None, qc_plots=QC_PLOTS
         )
+        report_paths = _refresh_dataset_qc(ds)
         batch = summarize_batch(results)
         all_results.extend(results)
         summary["datasets"][ds.name] = {
@@ -303,6 +351,7 @@ elif MODE == "full":
             "skipped": batch.skipped,
             "failed": batch.failed,
             "n_subjects": len(results),
+            "qc_report": str(report_paths["summary_csv"]),
         }
         print(
             f"[{ds.name}] completed={batch.completed} "

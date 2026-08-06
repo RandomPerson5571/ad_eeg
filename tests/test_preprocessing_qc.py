@@ -86,6 +86,23 @@ def test_log_to_summary_row():
     assert row["alpha_before_log10"] == -7.42
 
 
+def test_log_to_summary_row_ignores_legacy_zero_band_keys():
+    log = _sample_log()
+    clean = log["stages"]["clean"]
+    for band in ("delta", "theta", "alpha", "beta", "gamma"):
+        for suffix in ("_before_uv2", "_after_uv2", "_delta_uv2"):
+            clean.pop(f"{band}{suffix}", None)
+        clean[f"{band}_before"] = 0.0
+    row = log_to_summary_row(log)
+    assert row["alpha_before_uv2"] is None
+    assert row["alpha_delta_uv2"] is None
+
+
+def test_v2_band_power_rounds_to_zero():
+    assert round(8.6e-12, 8) == 0.0
+    assert round(8.6e-12 * 1e12, 4) == 8.6
+
+
 def test_compute_distribution():
     dist = compute_distribution([1.0, 2.0, 3.0, 4.0, 100.0])
     assert dist["count"] == 5
@@ -134,6 +151,7 @@ def test_write_preprocess_report(tmp_path, monkeypatch):
 
     import eeg.preprocess_report as pr
 
+    monkeypatch.setattr(pr, "backfill_spectral_qc", lambda d, e, limit=None: [])
     monkeypatch.setattr(pr, "load_subject_logs", lambda d, e: [_sample_log(f"sub-{i:03d}") for i in range(1, 4)])
     monkeypatch.setattr(pr, "qc_report_dir", lambda d, e: tmp_path / "data" / "preprocessed" / d / e / "qc")
 

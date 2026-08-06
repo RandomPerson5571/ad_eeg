@@ -167,8 +167,16 @@ def log_to_summary_row(log: dict[str, Any]) -> dict[str, Any]:
     for band in BAND_RANGES:
         for suffix in ("before_uv2", "after_uv2", "delta_uv2", "before_log10", "after_log10"):
             key = f"{band}_{suffix}"
-            legacy = f"{band}_{suffix.replace('_uv2', '').replace('_log10', '')}"
-            row[key] = log.get(key, clean_stage.get(key, clean_stage.get(legacy)))
+            val = log.get(key)
+            if val is None:
+                val = clean_stage.get(key)
+            if val is None and suffix.endswith("_uv2"):
+                legacy = f"{band}_{suffix.replace('_uv2', '')}"
+                legacy_val = clean_stage.get(legacy)
+                # ponytail: skip legacy V²/Hz keys — round(1e-11, 8) == 0.0
+                if legacy_val not in (None, 0, 0.0):
+                    val = legacy_val
+            row[key] = val
 
     if log.get("status") == "error":
         for stage_name, stage_data in stages.items():
