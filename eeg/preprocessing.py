@@ -480,8 +480,6 @@ def _furthest_valid_stage(
         else:
             break
     return valid
-
-
 def preprocess_subject(
     raw_path: Path,
     participant_id: str,
@@ -490,12 +488,54 @@ def preprocess_subject(
     config: dict,
     config_fp: str,
     force: bool = False,
+    output_dir=None,
 ) -> PreprocessResult:
     """Run or resume full checkpoint chain for one subject."""
+
     t0 = time.perf_counter()
+
     base = load_base_configs()
     sfreq = base["features"]["sampling_rate"]
     raw_sha256 = sha256_file(raw_path)
+
+    # ---------------------------------------------------------
+    # OUTPUT DIRECTORY
+    # ---------------------------------------------------------
+
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+
+        subject_output_dir = (
+            output_dir
+            / dataset_name
+            / participant_id
+        )
+
+        subject_output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        def cp_path(stage):
+            return (
+                subject_output_dir
+                / f"{stage}.fif"
+            )
+
+    else:
+        # Preserve original behavior when no output_dir
+        # is supplied.
+        def cp_path(stage):
+            return checkpoint_path(
+                dataset_name,
+                experiment,
+                participant_id,
+                stage,
+            )
+
+    # ---------------------------------------------------------
+    # LOG
+    # ---------------------------------------------------------
 
     log: dict[str, Any] = {
         "participant_id": participant_id,
@@ -504,111 +544,420 @@ def preprocess_subject(
         "stages": {},
         "warnings": [],
         "stages_completed": [],
+        "output_dir": str(
+            subject_output_dir
+            if output_dir is not None
+            else ""
+        ),
     }
 
+    # ---------------------------------------------------------
+    # RESUME CHECK
+    # ---------------------------------------------------------
+
     if not force:
-        furthest = _furthest_valid_stage(
-            dataset_name, experiment, participant_id, raw_sha256, config_fp
-        )
-        if furthest == "epochs":
-            epochs_path = resolve_checkpoint_path(
-                dataset_name, experiment, participant_id, "epochs"
+
+        # If using the Kaggle output directory, we need to
+        # determine the furthest valid checkpoint ourselves.
+        if output_dir is not None:
+
+            furthest = None
+
+            for stage in [
+                "raw",
+                "filtered",
+                "ica",
+                "clean",
+                "epochs",
+            ]:
+                cp = cp_path(stage)
+
+                if cp.exists():
+                    furthest = stage
+                else:
+                    break
+
+        else:
+
+            furthest = _furthest_valid_stage(
+                dataset_name,
+                experiment,
+                participant_id,
+                raw_sha256,
+                config_fp,
             )
-            epochs = load_checkpoint(epochs_path, "epochs")
+
+        # -----------------------------------------------------
+        # EVERYTHING ALREADY PROCESSED
+        # -----------------------------------------------------
+
+        if furthest == "epochs":
+
+            epochs_path = cp_path("epochs")
+
+            epochs = load_checkpoint(
+                epochs_path,
+                "epochs",
+            )
+
             from eeg.io import read_json
 
-            log_path = subject_log_path(dataset_name, experiment, participant_id)
-            if log_path.exists():
-                log = read_json(log_path)
-            log["status"] = "skipped"
-            log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
-            _flatten_subject_log(log, dataset_name, experiment)
-            write_json(log_path, log)
-            return PreprocessResult(participant_id, "skipped", log, epochs)
+            # Keep the existing log behavior when using the
+            # normal project output.
+            if output_dir is None:
 
-    stage_order = ["raw", "filtered", "ica", "clean", "epochs"]
+                log_path = subject_log_path(
+                    dataset_name,
+                    experiment,
+                    participant_id,
+                )
+
+                if log_path.exists():
+                    log = read_json(log_path)
+
+                log["status"] = "skipped"
+                log["runtime_seconds"] = round(
+                    time.perf_counter() - t0,
+                    2,
+                )
+
+                _flatten_subject_log(
+                    log,
+                    dataset_name,
+                    experiment,
+                )
+
+                write_json(
+                    log_path,
+                    log,
+                )
+
+            else:
+                log["status"] = "skipped"
+                log["runtime_seconds"] = round(
+                    time.perf_counter() - t0,
+                    2,
+                )
+
+            return PreprocessResult(
+                participant_id,
+                "skipped",
+                log,
+                epochs,
+            )
+
+    # ---------------------------------------------------------
+    # STAGE ORDER
+    # ---------------------------------------------------------
+
+    stage_order = [
+        "raw",
+        "filtered",
+        "ica",
+        "clean",
+        "epochs",
+    ]
+
     start_idx = 0
+
     if not force:
-        furthest = _furthest_valid_stage(
-            dataset_name, experiment, participant_id, raw_sha256, config_fp
-        )
+
+        if output_dir is not None:
+
+            furthest = None
+
+            for stage in stage_order:
+
+                cp = cp_path(stage)
+
+                if cp.exists():
+                    furthest = stage
+                else:
+                    break
+
+        else:
+
+            furthest = _furthest_valid_stage(
+                dataset_name,
+                experiment,
+                participant_id,
+                raw_sha256,
+                config_fp,
+            )
+
         if furthest:
-            start_idx = stage_order.index(furthest)
+            start_idx = stage_order.index(
+                furthest
+            )
+
+    # ---------------------------------------------------------
+    # PROCESSING
+    # ---------------------------------------------------------
 
     current_raw: mne.io.BaseRaw | None = None
     current_epochs: mne.Epochs | None = None
 
     for i, stage in enumerate(stage_order):
+
         if i < start_idx:
             continue
 
-        cp = checkpoint_path(dataset_name, experiment, participant_id, stage)
+        cp = cp_path(stage)
+
         stage_t0 = time.perf_counter()
 
         try:
-            if stage == "raw":
-                current_raw, meta = stage_raw(raw_path, sfreq)
-                save_checkpoint(current_raw, cp)
-            elif stage == "filtered":
-                assert current_raw is not None or start_idx > 0
-                if current_raw is None:
-                    prev = resolve_checkpoint_path(
-                        dataset_name, experiment, participant_id, "raw"
-                    )
-                    current_raw = load_checkpoint(prev, "raw")
-                current_raw, meta = stage_filtered(current_raw, config)
-                save_checkpoint(current_raw, cp)
-            elif stage == "ica":
-                if current_raw is None:
-                    prev = resolve_checkpoint_path(
-                        dataset_name, experiment, participant_id, "filtered"
-                    )
-                    current_raw = load_checkpoint(prev, "filtered")
-                current_raw, meta = stage_ica(current_raw, config)
-                save_checkpoint(current_raw, cp)
-            elif stage == "clean":
-                if current_raw is None:
-                    prev = resolve_checkpoint_path(
-                        dataset_name, experiment, participant_id, "ica"
-                    )
-                    current_raw = load_checkpoint(prev, "ica")
-                raw_before = None
-                raw_cp = resolve_checkpoint_path(
-                    dataset_name, experiment, participant_id, "raw"
-                )
-                if raw_cp.exists():
-                    raw_before = load_checkpoint(raw_cp, "raw")
-                current_raw, meta = stage_clean(current_raw, config, raw_before=raw_before)
-                save_checkpoint(current_raw, cp)
-            elif stage == "epochs":
-                if current_raw is None:
-                    prev = resolve_checkpoint_path(
-                        dataset_name, experiment, participant_id, "clean"
-                    )
-                    current_raw = load_checkpoint(prev, "clean")
-                current_epochs, meta = stage_epochs(current_raw, config)
-                save_checkpoint(current_epochs, cp)
 
-            elapsed = round(time.perf_counter() - stage_t0, 2)
-            stage_meta = {k: v for k, v in meta.items() if k != "reject_log"}
-            log["stages"][stage] = {"runtime_s": elapsed, "status": "ok", **stage_meta}
-            log["stages_completed"].append(stage)
+            # =================================================
+            # RAW
+            # =================================================
+
+            if stage == "raw":
+
+                current_raw, meta = stage_raw(
+                    raw_path,
+                    sfreq,
+                )
+
+                save_checkpoint(
+                    current_raw,
+                    cp,
+                )
+
+            # =================================================
+            # FILTERED
+            # =================================================
+
+            elif stage == "filtered":
+
+                if current_raw is None:
+
+                    prev = cp_path("raw")
+
+                    current_raw = load_checkpoint(
+                        prev,
+                        "raw",
+                    )
+
+                current_raw, meta = stage_filtered(
+                    current_raw,
+                    config,
+                )
+
+                save_checkpoint(
+                    current_raw,
+                    cp,
+                )
+
+            # =================================================
+            # ICA
+            # =================================================
+
+            elif stage == "ica":
+
+                if current_raw is None:
+
+                    prev = cp_path("filtered")
+
+                    current_raw = load_checkpoint(
+                        prev,
+                        "filtered",
+                    )
+
+                current_raw, meta = stage_ica(
+                    current_raw,
+                    config,
+                )
+
+                save_checkpoint(
+                    current_raw,
+                    cp,
+                )
+
+            # =================================================
+            # CLEAN
+            # =================================================
+
+            elif stage == "clean":
+
+                if current_raw is None:
+
+                    prev = cp_path("ica")
+
+                    current_raw = load_checkpoint(
+                        prev,
+                        "ica",
+                    )
+
+                raw_before = None
+
+                raw_cp = cp_path("raw")
+
+                if raw_cp.exists():
+
+                    raw_before = load_checkpoint(
+                        raw_cp,
+                        "raw",
+                    )
+
+                current_raw, meta = stage_clean(
+                    current_raw,
+                    config,
+                    raw_before=raw_before,
+                )
+
+                save_checkpoint(
+                    current_raw,
+                    cp,
+                )
+
+            # =================================================
+            # EPOCHS
+            # =================================================
+
+            elif stage == "epochs":
+
+                if current_raw is None:
+
+                    prev = cp_path("clean")
+
+                    current_raw = load_checkpoint(
+                        prev,
+                        "clean",
+                    )
+
+                current_epochs, meta = stage_epochs(
+                    current_raw,
+                    config,
+                )
+
+                save_checkpoint(
+                    current_epochs,
+                    cp,
+                )
+
+            # =================================================
+            # LOG STAGE
+            # =================================================
+
+            elapsed = round(
+                time.perf_counter()
+                - stage_t0,
+                2,
+            )
+
+            stage_meta = {
+                k: v
+                for k, v in meta.items()
+                if k != "reject_log"
+            }
+
+            log["stages"][stage] = {
+                "runtime_s": elapsed,
+                "status": "ok",
+                **stage_meta,
+            }
+
+            log["stages_completed"].append(
+                stage
+            )
+
             if meta.get("warnings"):
-                log["warnings"].extend(meta["warnings"])
+
+                log["warnings"].extend(
+                    meta["warnings"]
+                )
 
         except Exception as exc:
+
             log["stages"][stage] = {
-                "runtime_s": round(time.perf_counter() - stage_t0, 2),
+                "runtime_s": round(
+                    time.perf_counter()
+                    - stage_t0,
+                    2,
+                ),
                 "status": "error",
                 "error": str(exc),
             }
+
             log["status"] = "error"
-            log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
-            write_json(subject_log_path(dataset_name, experiment, participant_id), log)
-            return PreprocessResult(participant_id, "error", log)
+
+            log["runtime_seconds"] = round(
+                time.perf_counter() - t0,
+                2,
+            )
+
+            # Don't put Kaggle output logs in the normal
+            # project output.
+            if output_dir is not None:
+
+                error_log = (
+                    subject_output_dir
+                    / "preprocess_log.json"
+                )
+
+                write_json(
+                    error_log,
+                    log,
+                )
+
+            else:
+
+                write_json(
+                    subject_log_path(
+                        dataset_name,
+                        experiment,
+                        participant_id,
+                    ),
+                    log,
+                )
+
+            return PreprocessResult(
+                participant_id,
+                "error",
+                log,
+            )
+
+    # ---------------------------------------------------------
+    # FINAL LOG
+    # ---------------------------------------------------------
 
     log["status"] = "ok"
-    log["runtime_seconds"] = round(time.perf_counter() - t0, 2)
-    _flatten_subject_log(log, dataset_name, experiment)
-    write_json(subject_log_path(dataset_name, experiment, participant_id), log)
-    return PreprocessResult(participant_id, "ok", log, current_epochs)
+
+    log["runtime_seconds"] = round(
+        time.perf_counter() - t0,
+        2,
+    )
+
+    _flatten_subject_log(
+        log,
+        dataset_name,
+        experiment,
+    )
+
+    if output_dir is not None:
+
+        log_path = (
+            subject_output_dir
+            / "preprocess_log.json"
+        )
+
+    else:
+
+        log_path = subject_log_path(
+            dataset_name,
+            experiment,
+            participant_id,
+        )
+
+    write_json(
+        log_path,
+        log,
+    )
+
+    return PreprocessResult(
+        participant_id,
+        "ok",
+        log,
+        current_epochs,
+    )
