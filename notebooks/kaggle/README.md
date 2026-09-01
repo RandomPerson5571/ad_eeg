@@ -78,6 +78,11 @@ dependency. Notebook 02 enumerates the saved `*_epo.fif` files directly and
 exports each one as a float32 array with shape
 `(n_epochs, n_channels, n_samples)`.
 
+For preprocessing artifacts created before `participant_index` was embedded in
+`metadata.json`, the eyes-closed pipeline uses the authoritative OpenNeuro
+ds004504 group ranges bundled in `configs/dataset.yaml`. This compatibility
+fallback does not write to or alter the preprocessing artifact.
+
 Every production notebook runs an input contract before its stage and an output
 contract afterward. Contracts check required files, identity/label columns, and
 array/table shapes so an incompatible artifact fails in the notebook that

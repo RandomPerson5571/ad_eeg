@@ -5,6 +5,12 @@ datasets:
     task: eyesclosed
     raw_subdir: dataset2
     aliases: ["2", "dataset2", "eyesclosed", "eyes_closed"]
+    # Official OpenNeuro ds004504 participants.tsv label ranges.
+    # Inclusive subject numbers: 36 AD, 29 controls, 23 FTD.
+    participant_group_ranges:
+      A: [1, 36]
+      C: [37, 65]
+      F: [66, 88]
   photomark:
     id: 3
     task: photomark

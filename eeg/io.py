@@ -136,6 +136,28 @@ def list_subjects(dataset_spec) -> pd.DataFrame:
     return df
 
 
+def configured_participant_index(dataset_spec) -> pd.DataFrame:
+    """Build the authoritative participant/group index bundled in dataset config."""
+    datasets = load_base_configs()["dataset"].get("datasets", {})
+    dataset_config = datasets.get(dataset_spec.name, {})
+    ranges = dataset_config.get("participant_group_ranges", {})
+    rows = []
+    for group, bounds in ranges.items():
+        if not isinstance(bounds, list) or len(bounds) != 2:
+            raise ValueError(
+                f"Invalid participant_group_ranges for {dataset_spec.name}: "
+                f"{group}={bounds!r}"
+            )
+        start, end = (int(value) for value in bounds)
+        rows.extend(
+            {"participant_id": f"sub-{subject_num:03d}", "Group": str(group)}
+            for subject_num in range(start, end + 1)
+        )
+    frame = pd.DataFrame(rows, columns=["participant_id", "Group"])
+    frame["Dataset"] = dataset_spec.id
+    return frame
+
+
 def list_preprocessed_subjects(dataset_spec, experiment: str) -> pd.DataFrame:
     """Load labels from raw data or the existing preprocessing metadata artifact."""
     raw_path = dataset_spec.raw_dir / "participants.tsv"
@@ -151,9 +173,22 @@ def list_preprocessed_subjects(dataset_spec, experiment: str) -> pd.DataFrame:
             df = pd.DataFrame(participant_index)
             df["Dataset"] = dataset_spec.id
             return df
+
+    df = configured_participant_index(dataset_spec)
+    if not df.empty:
+        suffix = STAGE_SUFFIX["epochs"]
+        available_ids = {
+            path.name[: -len(suffix)]
+            for path in preprocessed_dir(dataset_spec.name, experiment).glob(
+                f"*{suffix}"
+            )
+        }
+        if available_ids:
+            df = df[df["participant_id"].isin(available_ids)].reset_index(drop=True)
+        return df
     raise FileNotFoundError(
         f"Participant metadata not found at {raw_path} or in {metadata_path}. "
-        "Re-run notebook 01 in full mode so metadata.json includes participant_index."
+        f"No configured participant index exists for {dataset_spec.name}."
     )
 
 

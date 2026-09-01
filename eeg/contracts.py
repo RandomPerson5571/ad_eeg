@@ -9,6 +9,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from eeg.config import resolve_dataset
+from eeg.io import configured_participant_index
 from eeg.paths import (
     feature_importance_path,
     features_parquet_path,
@@ -44,22 +46,24 @@ def validate_preprocessed_artifacts(
         )
 
     metadata_path = root / "metadata.json"
-    if not require_participants and not metadata_path.is_file():
-        return {
-            "root": root,
-            "participants": None,
-            "epoch_checkpoints": len(epoch_files),
-        }
-    _require_file(metadata_path, "notebook 01 metadata")
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata = (
+        json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata_path.is_file()
+        else {}
+    )
     participant_index = metadata.get("participant_index", [])
-    if not participant_index and not require_participants:
+    participants = pd.DataFrame(participant_index)
+    participant_source = "metadata.json"
+    if participants.empty:
+        dataset_spec = resolve_dataset(dataset)[0]
+        participants = configured_participant_index(dataset_spec)
+        participant_source = "configs/dataset.yaml"
+    if participants.empty and not require_participants:
         return {
             "root": root,
             "participants": None,
             "epoch_checkpoints": len(epoch_files),
         }
-    participants = pd.DataFrame(participant_index)
     required = {"participant_id", "Group"}
     missing = sorted(required - set(participants.columns))
     if missing:
@@ -80,9 +84,14 @@ def validate_preprocessed_artifacts(
             f"Epoch checkpoints are absent from {metadata_path} participant_index: "
             f"{unknown[:5]}"
         )
+    if participant_source == "configs/dataset.yaml":
+        participants = participants[
+            participants["participant_id"].astype(str).isin(checkpoint_ids)
+        ]
     return {
         "root": root,
         "participants": len(participants),
+        "participant_source": participant_source,
         "epoch_checkpoints": len(epoch_files),
     }
 

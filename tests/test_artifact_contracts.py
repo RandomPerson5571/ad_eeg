@@ -12,7 +12,7 @@ from eeg.contracts import (
     validate_preprocessed_artifacts,
 )
 from eeg.export import export_all_epochs_npy
-from eeg.io import list_preprocessed_subjects
+from eeg.io import configured_participant_index, list_preprocessed_subjects
 
 
 def test_preprocessed_contract_accepts_epoch_checkpoints_and_participant_index(
@@ -47,7 +47,8 @@ def test_preprocessed_contract_allows_step_02_metadata_without_participant_index
         "eyesclosed", "baseline", require_participants=False
     )
 
-    assert result["participants"] is None
+    assert result["participants"] == 1
+    assert result["participant_source"] == "configs/dataset.yaml"
     assert result["epoch_checkpoints"] == 1
 
 
@@ -115,3 +116,37 @@ def test_feature_extraction_labels_fall_back_to_preprocessing_metadata(
     assert participants.loc[0, "participant_id"] == "sub-001"
     assert participants.loc[0, "Group"] == "A"
     assert participants.loc[0, "Dataset"] == 2
+
+
+def test_official_configured_participant_index_has_expected_class_counts():
+    spec = SimpleNamespace(name="eyesclosed", id=2)
+
+    participants = configured_participant_index(spec)
+
+    assert len(participants) == 88
+    assert participants["Group"].value_counts().to_dict() == {
+        "A": 36,
+        "C": 29,
+        "F": 23,
+    }
+
+
+def test_legacy_metadata_uses_configured_labels_for_available_epochs(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "preprocessed"
+    root.mkdir()
+    (root / "sub-001_epo.fif").touch()
+    (root / "sub-066_epo.fif").touch()
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text("{}")
+    spec = SimpleNamespace(name="eyesclosed", id=2, raw_dir=tmp_path / "raw")
+    monkeypatch.setattr("eeg.io.experiment_metadata_path", lambda *_: metadata_path)
+    monkeypatch.setattr("eeg.io.preprocessed_dir", lambda *_: root)
+
+    participants = list_preprocessed_subjects(spec, "baseline")
+
+    assert participants[["participant_id", "Group"]].to_dict("records") == [
+        {"participant_id": "sub-001", "Group": "A"},
+        {"participant_id": "sub-066", "Group": "F"},
+    ]
