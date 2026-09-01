@@ -2,7 +2,7 @@
 
 **These notebooks run on [Kaggle](https://www.kaggle.com) cloud CPUs — not on your laptop.**
 
-Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run, then **Save Version → Create Dataset** to chain stages.
+Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run, then **Save Version → Create Dataset** to chain stages. Production artifacts are written directly to `/kaggle/working/pipeline_output/data`; there is no publish-time copy.
 
 | Notebook | Stage | Kaggle inputs |
 |----------|-------|---------------|
@@ -24,21 +24,31 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run,
 4. **Add Data** → attach datasets (see config cell in each notebook).
 5. Edit the config cell:
    - `RAW_EEG_INPUT` — slug of dataset with `EEG_data/dataset2/` and `dataset3/`
-   - `PIPELINE_INPUT` — slug of prior notebook output (contains `data/` folder)
+   - `PIPELINE_INPUT` — slug of prior notebook output (accepts `pipeline_output/data/` or `data/`)
 6. Run all cells.
 7. **Save Version** with output → **Create Dataset** for the next notebook.
 
 ## How code gets onto Kaggle
 
-Each notebook clones the repo into `/kaggle/working/ad_eeg`:
+Each notebook clones the repo into temporary storage at `/kaggle/temp/ad_eeg`:
 
 ```text
-git clone https://github.com/RandomPerson5571/ad_eeg.git /kaggle/working/ad_eeg
-pip install -r requirements.txt
+git clone https://github.com/RandomPerson5571/ad_eeg.git /kaggle/temp/ad_eeg
+pip install -r requirements-kaggle.txt
 ```
 
 Raw EEG is symlinked from `/kaggle/input/<RAW_EEG_INPUT>/EEG_data`.  
-Prior stages are copied from `/kaggle/input/<PIPELINE_INPUT>/data`.
+The repo's `data/` path is symlinked to `/kaggle/working/pipeline_output/data`, so new files land directly in the saved artifact tree. Prior stages are copied once from the attached read-only dataset into that tree; they are not copied again at the end.
+
+Only files under `/kaggle/working` are included when Kaggle saves notebook output. Keeping the clone under `/kaggle/temp` prevents the GitHub repository (including `.git`) from leaking into the final dataset.
+
+## Preprocessing storage policy
+
+Notebook 01 defaults to `KEEP_INTERMEDIATE_CHECKPOINTS = False`. After a subject has a valid epochs checkpoint and its QC summary has been generated, the large `raw`, `filtered`, `ica`, and `clean` FIF checkpoints are deleted. Epochs, logs, QC reports, and failed-subject resume checkpoints remain available. Set the option to `True` only when you need every resumable checkpoint and have enough Kaggle storage.
+
+In `inspect` and `test` modes, preprocessing checkpoints stay under `/kaggle/temp`; only the smaller summaries and QC plots in `/kaggle/working/test_output` are saved. `full` mode is the only mode that writes production data to `pipeline_output/data`.
+
+Before restoring an upstream dataset, the setup cell checks available space and reserves 512 MiB. Every production stage reports current artifact size and free `/kaggle/working` capacity.
 
 ## Chaining example
 

@@ -16,19 +16,25 @@ KAGGLE_INTRO = """\
 1. **Settings → Internet → On** (needed for `git clone` + `pip install`)
 2. **Settings → Accelerator → None** (CPU is enough for Phase 1)
 3. **Add Data** → attach input dataset(s) listed in the config cell below
-4. Run all cells, then **Save Version** → **Save as Dataset** to pass `data/` to the next notebook
+4. Run all cells, then **Save Version** → **Save as Dataset** to pass the compact
+   `pipeline_output/data/` artifact to the next notebook
+
+The repository is cloned into temporary storage and is never copied into the saved
+notebook output. Pipeline stages write directly to the final output directory, avoiding
+a second full-size copy at publish time.
 """
 
 KAGGLE_CONFIG = '''\
 # --- Kaggle configuration (edit slugs to match your input datasets) ---
 REPO_URL = "https://github.com/RandomPerson5571/ad_eeg.git"
 REPO_BRANCH = "main"
-PROJECT_DIR = "/kaggle/working/ad_eeg"
+PROJECT_DIR = "/kaggle/temp/ad_eeg"  # temporary; excluded from saved notebook output
+OUTPUT_DIR = "/kaggle/working/pipeline_output"  # the only production artifact root
 
 # Kaggle dataset slug with raw EEG (must contain EEG_data/dataset2/ and dataset3/)
 RAW_EEG_INPUT = "REPLACE_WITH_RAW_EEG_DATASET_SLUG"
 
-# Optional: output from a prior pipeline notebook (must contain data/ at root)
+# Optional: output from a prior pipeline notebook (pipeline_output/data/, data/, or stage dirs at root)
 PIPELINE_INPUT = None  # e.g. "REPLACE_WITH_PRIOR_PIPELINE_OUTPUT_SLUG"
 '''
 
@@ -47,6 +53,28 @@ if not IS_KAGGLE:
     )
 
 PROJECT_DIR = Path(PROJECT_DIR)
+OUTPUT_DIR = Path(OUTPUT_DIR)
+# Notebook 01 defines MODE before setup. Its inspect/test checkpoints are scratch
+# data; only their small reports under /kaggle/working/test_output are persisted.
+if globals().get("MODE") in {"inspect", "test"}:
+    OUTPUT_DIR = Path("/kaggle/temp/pipeline_output")
+OUTPUT_DATA_DIR = OUTPUT_DIR / "data"
+KAGGLE_WORKING_DIR = Path("/kaggle/working")
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+if _is_relative_to(PROJECT_DIR, KAGGLE_WORKING_DIR):
+    raise ValueError(
+        "PROJECT_DIR must be outside /kaggle/working so the Git clone is not "
+        "included in the saved Kaggle output. Use /kaggle/temp/ad_eeg."
+    )
 
 
 def run(cmd, cwd=None):
@@ -55,12 +83,91 @@ def run(cmd, cwd=None):
 
 
 if not PROJECT_DIR.exists():
+    PROJECT_DIR.parent.mkdir(parents=True, exist_ok=True)
     run(f"git clone --branch {REPO_BRANCH} --depth 1 {REPO_URL} {PROJECT_DIR}")
+
+# Point the code's data/ path at the one-and-only persisted artifact tree.
+# Preserve the small tracked seed files (for example data/manifest.json) first.
+OUTPUT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+project_data = PROJECT_DIR / "data"
+if project_data.is_symlink():
+    if project_data.resolve() != OUTPUT_DATA_DIR.resolve():
+        project_data.unlink()
+elif project_data.exists():
+    shutil.copytree(project_data, OUTPUT_DATA_DIR, dirs_exist_ok=True)
+    shutil.rmtree(project_data)
+if not project_data.exists():
+    os.symlink(OUTPUT_DATA_DIR, project_data, target_is_directory=True)
 
 os.chdir(PROJECT_DIR)
 sys.path.insert(0, str(PROJECT_DIR))
-run(f"{sys.executable} -m pip install -q -r requirements.txt", cwd=PROJECT_DIR)
+run(f"{sys.executable} -m pip install -q -r requirements-kaggle.txt", cwd=PROJECT_DIR)
 print(f"Project root: {PROJECT_DIR.resolve()}", flush=True)
+print(f"Pipeline output: {OUTPUT_DIR.resolve()}", flush=True)
+
+
+def _tree_size(path: Path) -> int:
+    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+
+
+def _gib(n_bytes: int) -> float:
+    return n_bytes / (1024 ** 3)
+
+
+def _print_storage(label: str) -> None:
+    usage = shutil.disk_usage(KAGGLE_WORKING_DIR)
+    output_bytes = _tree_size(OUTPUT_DIR) if OUTPUT_DIR.exists() else 0
+    print(
+        f"{label}: output={_gib(output_bytes):.2f} GiB, "
+        f"working free={_gib(usage.free):.2f} GiB",
+        flush=True,
+    )
+
+
+def _pipeline_data_source(slug: str) -> Path:
+    base = Path("/kaggle/input") / slug
+    candidates = (base / "pipeline_output" / "data", base / "data", base)
+    stage_dirs = {"audit", "preprocessed", "features", "models", "results"}
+    for candidate in candidates:
+        if candidate.is_dir() and any((candidate / name).exists() for name in stage_dirs):
+            return candidate
+    raise FileNotFoundError(
+        f"Pipeline input '{slug}' has no pipeline_output/data/ or data/ artifact tree. "
+        "Attach the previous notebook's saved output dataset."
+    )
+
+
+def _restore_pipeline_data(slug: str) -> None:
+    pipeline_src = _pipeline_data_source(slug)
+    source_bytes = _tree_size(pipeline_src)
+    free_bytes = shutil.disk_usage(KAGGLE_WORKING_DIR).free
+    reserve_bytes = 512 * 1024 ** 2
+    if source_bytes + reserve_bytes > free_bytes:
+        raise OSError(
+            f"Pipeline input needs about {_gib(source_bytes):.2f} GiB but only "
+            f"{_gib(free_bytes):.2f} GiB is free in /kaggle/working. "
+            "Use a compact upstream artifact or start a fresh Kaggle session."
+        )
+    shutil.copytree(pipeline_src, OUTPUT_DATA_DIR, dirs_exist_ok=True)
+    print(f"Restored pipeline data from {pipeline_src}", flush=True)
+    _print_storage("After restore")
+
+
+def summarize_output() -> None:
+    if not OUTPUT_DATA_DIR.exists():
+        print("No pipeline data was produced.", flush=True)
+        return
+    leaked_repos = [p for p in OUTPUT_DIR.rglob(".git") if p.is_dir()]
+    if leaked_repos:
+        raise RuntimeError(f"Refusing to publish a Git repository: {leaked_repos[0]}")
+    n_files = sum(1 for p in OUTPUT_DATA_DIR.rglob("*") if p.is_file())
+    _print_storage("Final artifact")
+    print(f"Output ready: {OUTPUT_DIR} ({n_files} files)", flush=True)
+    print(
+        "Save Version → Save output as a new Kaggle Dataset, then attach it "
+        "in the next notebook.",
+        flush=True,
+    )
 
 
 def _find_eeg_root(slug: str) -> Path | None:
@@ -98,29 +205,13 @@ if RAW_EEG_INPUT:
     print(f"EEG_data → {src}", flush=True)
 
 if PIPELINE_INPUT:
-    pipeline_src = Path("/kaggle/input") / PIPELINE_INPUT / "data"
-    if not pipeline_src.exists():
-        pipeline_src = Path("/kaggle/input") / PIPELINE_INPUT
-        if not (pipeline_src / "preprocessed").exists() and not (pipeline_src / "audit").exists():
-            raise FileNotFoundError(
-                f"Pipeline input '{PIPELINE_INPUT}' has no data/ folder. "
-                "Save the previous notebook version as a Dataset first."
-            )
-    dest = PROJECT_DIR / "data"
-    dest.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(pipeline_src, dest, dirs_exist_ok=True)
-    print(f"Restored pipeline data from {pipeline_src}", flush=True)
+    _restore_pipeline_data(PIPELINE_INPUT)
 '''
 
 KAGGLE_SAVE = '''\
-# Publish artifacts for the next notebook: Save Version → Output → Create Dataset
+# Artifacts already live in their final location; no large publish-time copy is needed.
 if Path("/kaggle/input").exists():
-    out = Path("/kaggle/working/pipeline_output")
-    src = Path("data")
-    if src.exists():
-        shutil.copytree(src, out / "data", dirs_exist_ok=True)
-        print(f"Output ready: {out}")
-        print("Save Version → Save output as new Kaggle Dataset, then attach in the next notebook.")
+    summarize_output()
 '''
 
 CONFIG_CELL = '''\
@@ -146,6 +237,8 @@ print(CONFIG)
 
 PREPROCESS_PIPELINE_CONFIG = '''\
 # --- Pipeline configuration (edit before running) ---
+from pathlib import Path
+
 MODE = "test"          # "inspect" | "test" | "full"
 DATASET = "dataset2"   # "dataset2" | "dataset3" | "all"
 EXPERIMENT = "baseline"
@@ -153,6 +246,7 @@ FORCE = False
 WORKERS = 2
 TEST_SUBJECTS = 5      # used when MODE == "test"
 INSPECT_SUBJECT = 1    # subject number when MODE == "inspect"
+KEEP_INTERMEDIATE_CHECKPOINTS = False  # False keeps epochs + QC/logs and saves substantial space
 
 VALID_MODES = {"inspect", "test", "full"}
 if MODE not in VALID_MODES:
@@ -197,7 +291,7 @@ matplotlib.use("Agg")
 from eeg.cli import subject_num_from_id
 from eeg.config import experiment_metadata
 from eeg.io import write_json
-from eeg.paths import qc_report_dir
+from eeg.paths import STAGE_SUFFIX, preprocessed_dir, qc_report_dir
 from eeg.preprocess_report import write_preprocess_report
 from eeg.qc import BAND_RANGES, backfill_spectral_qc, preprocessing_metrics
 from eeg.runner import summarize_batch
@@ -236,6 +330,26 @@ def _refresh_dataset_qc(ds, limit=None):
     return report_paths
 
 
+def _compact_dataset_checkpoints(ds):
+    """Remove resumable intermediates only after a valid epochs file exists."""
+    root = preprocessed_dir(ds.name, EXPERIMENT)
+    removed_files = 0
+    removed_bytes = 0
+    epoch_suffix = STAGE_SUFFIX["epochs"]
+    for epoch_path in root.glob(f"*{epoch_suffix}"):
+        participant_id = epoch_path.name[: -len(epoch_suffix)]
+        for stage in ("raw", "filtered", "ica", "clean"):
+            checkpoint = root / f"{participant_id}{STAGE_SUFFIX[stage]}"
+            if checkpoint.is_file():
+                removed_bytes += checkpoint.stat().st_size
+                checkpoint.unlink()
+                removed_files += 1
+    print(
+        f"  [{ds.name}] compacted {removed_files} intermediate checkpoints "
+        f"({_gib(removed_bytes):.2f} GiB); epochs, QC, and logs retained"
+    )
+
+
 def _qc_subject(ds, subject_num, out_dir):
     metrics = preprocessing_metrics(ds, subject_num, EXPERIMENT)
     plot_path = plot_preprocessing_panels_from_checkpoints(
@@ -261,6 +375,7 @@ summary = {
     "dataset": DATASET,
     "experiment": EXPERIMENT,
     "force": FORCE,
+    "keep_intermediate_checkpoints": KEEP_INTERMEDIATE_CHECKPOINTS,
     "started_at": datetime.now(timezone.utc).isoformat(),
 }
 t0 = time.perf_counter()
@@ -357,6 +472,9 @@ elif MODE == "full":
             f"[{ds.name}] completed={batch.completed} "
             f"skipped={batch.skipped} failed={batch.failed}"
         )
+        if not KEEP_INTERMEDIATE_CHECKPOINTS:
+            _compact_dataset_checkpoints(ds)
+        _print_storage(f"After {ds.name}")
 
     runtimes = [r.log.get("runtime_seconds", 0) for r in all_results if r.log.get("runtime_seconds")]
     summary["mean_runtime_seconds"] = round(sum(runtimes) / len(runtimes), 2) if runtimes else None
@@ -381,14 +499,9 @@ print(json.dumps(summary, indent=2, default=str))
 '''
 
 PREPROCESS_SAVE = '''\
-# Publish artifacts for the next notebook (full mode only)
+# Full-mode artifacts were written directly to the final output directory.
 if MODE == "full" and Path("/kaggle/input").exists():
-    out = Path("/kaggle/working/pipeline_output")
-    src = Path("data")
-    if src.exists():
-        shutil.copytree(src, out / "data", dirs_exist_ok=True)
-        print(f"Output ready: {out}")
-        print("Save Version → Save output as new Kaggle Dataset, then attach in the next notebook.")
+    summarize_output()
 elif MODE != "full":
     print(f"MODE={MODE!r}: skipping Kaggle dataset publish (use MODE='full' for production output).")
 '''
@@ -407,12 +520,19 @@ INPUT_HINTS = {
 }
 
 
-def _nb_cells(nb_key: str, title_md: str, body_cells: list, save: bool = True):
+def _nb_cells(
+    nb_key: str,
+    title_md: str,
+    body_cells: list,
+    save: bool = True,
+    pre_setup_cells=None,
+):
     cells = [
         ("markdown", KAGGLE_INTRO + "\n" + INPUT_HINTS.get(nb_key, "")),
         ("code", KAGGLE_CONFIG),
-        ("code", KAGGLE_SETUP),
     ]
+    cells.extend(pre_setup_cells or [])
+    cells.append(("code", KAGGLE_SETUP))
     cells.extend(body_cells)
     if save:
         cells.append(("code", KAGGLE_SAVE))
@@ -452,16 +572,18 @@ for spec in resolve_dataset("all"):
                 "`/kaggle/working/test_output/inspect/` |\n"
                 "| **test** | First N subjects, validation metrics, regression check | "
                 "`/kaggle/working/test_output/test/` |\n"
-                "| **full** | Entire dataset, persisted checkpoints | `data/` → publish as Kaggle Dataset |\n\n"
+                "| **full** | Entire dataset, compact persisted artifacts | "
+                "`pipeline_output/data/` → publish as Kaggle Dataset |\n\n"
                 "**Flow:** Configuration → Environment setup → Load config → Branch on `MODE` → "
-                "(full only) publish artifacts.",
+                "(full only) validate the already-persisted artifacts. By default, completed subjects "
+                "retain epochs, QC, and logs while large resumable intermediate FIF files are removed.",
             ),
-            ("code", PREPROCESS_PIPELINE_CONFIG),
             ("code", PREPROCESS_LOAD_CONFIG),
             ("code", PREPROCESS_RUN_CELL),
             ("code", PREPROCESS_SAVE),
         ],
         save=False,
+        pre_setup_cells=[("code", PREPROCESS_PIPELINE_CONFIG)],
     ),
     "02_epoching.ipynb": _nb_cells(
         "02",
@@ -680,7 +802,29 @@ def make_notebook(cells_spec):
     }
 
 
+def validate_notebook(name: str, notebook: dict) -> None:
+    """Keep storage and packaging regressions out of generated notebooks."""
+    code = "\n".join(
+        "".join(cell["source"])
+        for cell in notebook["cells"]
+        if cell["cell_type"] == "code"
+    )
+    forbidden = {
+        "/kaggle/working/ad_eeg": "repository clone would leak into saved output",
+        'shutil.copytree(src, out / "data"': "publish step would duplicate the artifact tree",
+    }
+    for snippet, reason in forbidden.items():
+        if snippet in code:
+            raise ValueError(f"{name}: {reason}")
+    if 'PROJECT_DIR = "/kaggle/temp/ad_eeg"' not in code:
+        raise ValueError(f"{name}: temporary repository path is missing")
+    if 'OUTPUT_DIR = "/kaggle/working/pipeline_output"' not in code:
+        raise ValueError(f"{name}: dedicated output root is missing")
+
+
 for name, spec in NOTEBOOKS.items():
     path = OUT / name
-    path.write_text(json.dumps(make_notebook(spec), indent=1), encoding="utf-8")
+    notebook = make_notebook(spec)
+    validate_notebook(name, notebook)
+    path.write_text(json.dumps(notebook, indent=1), encoding="utf-8")
     print("wrote", path)

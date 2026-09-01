@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -141,7 +142,24 @@ def save_features_parquet(
     label: str,
     dataset_id: int,
 ) -> Path:
-    path = features_parquet_path(dataset_name, experiment)
+    rows = prepare_feature_rows(
+        df,
+        participant_id,
+        dataset_name,
+        label,
+        dataset_id,
+    )
+    return merge_features_parquet([rows], dataset_name, experiment)
+
+
+def prepare_feature_rows(
+    df: pd.DataFrame,
+    participant_id: str,
+    dataset_name: str,
+    label: str,
+    dataset_id: int,
+) -> pd.DataFrame:
+    """Return a copy of one subject's features with identity columns."""
     if not isinstance(df, pd.DataFrame):
         df = pd.DataFrame(df)
     else:
@@ -151,15 +169,51 @@ def save_features_parquet(
     df["dataset_id"] = dataset_id
     df["dataset_name"] = dataset_name
     df["label"] = label
+    return df
+
+
+def merge_features_parquet(
+    frames: list[pd.DataFrame],
+    dataset_name: str,
+    experiment: str,
+) -> Path:
+    """Merge completed subject frames into the aggregate with one atomic write.
+
+    Callers may compute or serialize subjects in parallel, but only the parent
+    process should call this function for a dataset batch.
+    """
+    path = features_parquet_path(dataset_name, experiment)
+    if not frames:
+        return path
+
+    incoming = pd.concat(frames, ignore_index=True)
+    if "participant_id" not in incoming.columns:
+        raise ValueError("Feature frames must include participant_id")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         existing = pd.read_parquet(path)
-        existing = existing[existing["participant_id"] != participant_id]
-        combined = pd.concat([existing, df], ignore_index=True)
-        combined.to_parquet(path, engine="pyarrow")
+        participant_ids = set(incoming["participant_id"].astype(str))
+        existing = existing[
+            ~existing["participant_id"].astype(str).isin(participant_ids)
+        ]
+        combined = pd.concat([existing, incoming], ignore_index=True)
     else:
-        df.to_parquet(path, engine="pyarrow")
+        combined = incoming
+
+    # A failed write must not destroy the last complete aggregate.
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{path.stem}.",
+        suffix=path.suffix,
+        dir=path.parent,
+        delete=False,
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        combined.to_parquet(tmp_path, engine="pyarrow", index=False)
+        tmp_path.replace(path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
     return path
 
 

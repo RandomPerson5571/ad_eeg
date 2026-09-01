@@ -117,7 +117,8 @@ def build_summary_json(
     for metric in DISTRIBUTION_METRICS:
         if metric not in df.columns:
             continue
-        vals = pd.to_numeric(df[df["status"] == "ok"][metric], errors="coerce").dropna().tolist()
+        successful = df["status"].isin(["ok", "skipped"])
+        vals = pd.to_numeric(df[successful][metric], errors="coerce").dropna().tolist()
         distributions[metric] = compute_distribution(vals)
 
     failures = []

@@ -112,6 +112,12 @@ def test_compute_distribution():
     assert len(dist["histogram"]["counts"]) >= 5
 
 
+def test_skipped_legacy_logs_still_contribute_to_distributions():
+    df = build_summary_dataframe([_sample_log(status="skipped")])
+    summary = build_summary_json(df, "eyesclosed", "baseline", config={})
+    assert summary["distributions"]["pct_epochs_rejected"]["count"] == 1
+
+
 def test_detect_outliers_rejection():
     base = [
         {"participant_id": f"sub-{i:03d}", "pct_epochs_rejected": 5.0 + i * 0.1, "ica_n_components_fitted": 18, "ica_n_removed": 1}

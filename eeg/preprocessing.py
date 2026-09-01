@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import mne
 import numpy as np
@@ -24,7 +24,7 @@ from eeg.io import (
     try_load_checkpoint,
     write_json,
 )
-from eeg.paths import checkpoint_path, resolve_checkpoint_path, subject_log_path
+from eeg.paths import STAGE_SUFFIX, checkpoint_path, subject_log_path
 from eeg.qc import compute_band_power_table, compute_psd_delta, compute_snr
 
 
@@ -441,7 +441,10 @@ def _log_is_valid(log: dict, raw_sha256: str, fingerprint: str) -> bool:
     return (
         log.get("raw_sha256") == raw_sha256
         and log.get("config_fingerprint") == fingerprint
-        and log.get("status") == "ok"
+        # "skipped" was persisted by older releases after a cache hit. Treat
+        # those otherwise-valid logs as successful so upgrading does not force
+        # every subject through preprocessing once more.
+        and log.get("status") in ("ok", "skipped")
     )
 
 
@@ -452,9 +455,23 @@ def _furthest_valid_stage(
     raw_sha256: str,
     fingerprint: str,
 ) -> str | None:
+    return _furthest_valid_stage_from_paths(
+        subject_log_path(dataset, experiment, participant_id),
+        lambda stage: checkpoint_path(dataset, experiment, participant_id, stage),
+        raw_sha256,
+        fingerprint,
+    )
+
+
+def _furthest_valid_stage_from_paths(
+    log_path: Path,
+    checkpoint_for_stage: Callable[[str], Path],
+    raw_sha256: str,
+    fingerprint: str,
+) -> str | None:
+    """Return the last verified stage for either standard or custom paths."""
     from eeg.io import read_json
 
-    log_path = subject_log_path(dataset, experiment, participant_id)
     if not log_path.exists():
         return None
     log = read_json(log_path)
@@ -466,7 +483,7 @@ def _furthest_valid_stage(
 
     # Fast path: final artifact valid → fully done
     if "epochs" in completed:
-        cp = checkpoint_path(dataset, experiment, participant_id, "epochs")
+        cp = checkpoint_for_stage("epochs")
         if try_load_checkpoint(cp, "epochs") is not None:
             return "epochs"
 
@@ -474,12 +491,14 @@ def _furthest_valid_stage(
     for stage in order:
         if stage not in completed:
             break
-        cp = checkpoint_path(dataset, experiment, participant_id, stage)
+        cp = checkpoint_for_stage(stage)
         if try_load_checkpoint(cp, stage) is not None:
             valid = stage
         else:
             break
     return valid
+
+
 def preprocess_subject(
     raw_path: Path,
     participant_id: str,
@@ -503,13 +522,10 @@ def preprocess_subject(
     # ---------------------------------------------------------
 
     if output_dir is not None:
-        output_dir = Path(output_dir)
-
-        subject_output_dir = (
-            output_dir
-            / dataset_name
-            / participant_id
-        )
+        # The caller passes the exact dataset/experiment directory. Keep the
+        # canonical checkpoint filenames so custom output remains compatible
+        # with the rest of the pipeline instead of creating a second layout.
+        subject_output_dir = Path(output_dir)
 
         subject_output_dir.mkdir(
             parents=True,
@@ -519,8 +535,10 @@ def preprocess_subject(
         def cp_path(stage):
             return (
                 subject_output_dir
-                / f"{stage}.fif"
+                / f"{participant_id}{STAGE_SUFFIX[stage]}"
             )
+
+        preprocess_log_path = subject_output_dir / "logs" / f"{participant_id}.json"
 
     else:
         # Preserve original behavior when no output_dir
@@ -532,6 +550,12 @@ def preprocess_subject(
                 participant_id,
                 stage,
             )
+
+        preprocess_log_path = subject_log_path(
+            dataset_name,
+            experiment,
+            participant_id,
+        )
 
     # ---------------------------------------------------------
     # LOG
@@ -555,37 +579,14 @@ def preprocess_subject(
     # RESUME CHECK
     # ---------------------------------------------------------
 
+    furthest = None
     if not force:
-
-        # If using the Kaggle output directory, we need to
-        # determine the furthest valid checkpoint ourselves.
-        if output_dir is not None:
-
-            furthest = None
-
-            for stage in [
-                "raw",
-                "filtered",
-                "ica",
-                "clean",
-                "epochs",
-            ]:
-                cp = cp_path(stage)
-
-                if cp.exists():
-                    furthest = stage
-                else:
-                    break
-
-        else:
-
-            furthest = _furthest_valid_stage(
-                dataset_name,
-                experiment,
-                participant_id,
-                raw_sha256,
-                config_fp,
-            )
+        furthest = _furthest_valid_stage_from_paths(
+            preprocess_log_path,
+            cp_path,
+            raw_sha256,
+            config_fp,
+        )
 
         # -----------------------------------------------------
         # EVERYTHING ALREADY PROCESSED
@@ -602,42 +603,11 @@ def preprocess_subject(
 
             from eeg.io import read_json
 
-            # Keep the existing log behavior when using the
-            # normal project output.
-            if output_dir is None:
-
-                log_path = subject_log_path(
-                    dataset_name,
-                    experiment,
-                    participant_id,
-                )
-
-                if log_path.exists():
-                    log = read_json(log_path)
-
-                log["status"] = "skipped"
-                log["runtime_seconds"] = round(
-                    time.perf_counter() - t0,
-                    2,
-                )
-
-                _flatten_subject_log(
-                    log,
-                    dataset_name,
-                    experiment,
-                )
-
-                write_json(
-                    log_path,
-                    log,
-                )
-
-            else:
-                log["status"] = "skipped"
-                log["runtime_seconds"] = round(
-                    time.perf_counter() - t0,
-                    2,
-                )
+            # A skip is a property of this invocation, not of the persisted
+            # artifact. Preserve status="ok" in the success log so every
+            # subsequent run can validate and skip the same checkpoint.
+            if preprocess_log_path.exists():
+                log = read_json(preprocess_log_path)
 
             return PreprocessResult(
                 participant_id,
@@ -660,35 +630,8 @@ def preprocess_subject(
 
     start_idx = 0
 
-    if not force:
-
-        if output_dir is not None:
-
-            furthest = None
-
-            for stage in stage_order:
-
-                cp = cp_path(stage)
-
-                if cp.exists():
-                    furthest = stage
-                else:
-                    break
-
-        else:
-
-            furthest = _furthest_valid_stage(
-                dataset_name,
-                experiment,
-                participant_id,
-                raw_sha256,
-                config_fp,
-            )
-
-        if furthest:
-            start_idx = stage_order.index(
-                furthest
-            )
+    if not force and furthest:
+        start_idx = stage_order.index(furthest) + 1
 
     # ---------------------------------------------------------
     # PROCESSING
@@ -887,30 +830,7 @@ def preprocess_subject(
                 2,
             )
 
-            # Don't put Kaggle output logs in the normal
-            # project output.
-            if output_dir is not None:
-
-                error_log = (
-                    subject_output_dir
-                    / "preprocess_log.json"
-                )
-
-                write_json(
-                    error_log,
-                    log,
-                )
-
-            else:
-
-                write_json(
-                    subject_log_path(
-                        dataset_name,
-                        experiment,
-                        participant_id,
-                    ),
-                    log,
-                )
+            write_json(preprocess_log_path, log)
 
             return PreprocessResult(
                 participant_id,
@@ -935,25 +855,7 @@ def preprocess_subject(
         experiment,
     )
 
-    if output_dir is not None:
-
-        log_path = (
-            subject_output_dir
-            / "preprocess_log.json"
-        )
-
-    else:
-
-        log_path = subject_log_path(
-            dataset_name,
-            experiment,
-            participant_id,
-        )
-
-    write_json(
-        log_path,
-        log,
-    )
+    write_json(preprocess_log_path, log)
 
     return PreprocessResult(
         participant_id,

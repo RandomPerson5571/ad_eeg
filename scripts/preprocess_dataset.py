@@ -66,16 +66,18 @@ def run_preprocess(
     """
     Preprocess EEG data.
 
-    If output_dir is provided, all generated preprocessed EEG
-    checkpoints are written underneath that directory.
+    If output_dir is provided, it replaces ``data/preprocessed`` as the
+    checkpoint root. Each dataset/experiment keeps the same filenames as the
+    standard pipeline.
 
     Example:
 
         /kaggle/working/pipeline_output/
             dataset_name/
-                sub-001/
-                sub-002/
-                ...
+                experiment/
+                    sub-001_epo.fif
+                    sub-002_epo.fif
+                    ...
     """
 
     config = load_experiment(experiment)
@@ -107,6 +109,7 @@ def run_preprocess(
             dataset_output_dir = (
                 output_dir
                 / ds.name
+                / experiment
             )
 
             dataset_output_dir.mkdir(
@@ -125,6 +128,14 @@ def run_preprocess(
                 parents=True,
                 exist_ok=True,
             )
+
+        # ``None`` is significant: it tells preprocess_subject to use the
+        # canonical data/preprocessed/{dataset}/{experiment} paths. Passing
+        # dataset_output_dir in the default case used to select the custom
+        # layout and duplicate the dataset name.
+        worker_output_dir = (
+            str(dataset_output_dir) if output_dir is not None else None
+        )
 
         participants = list_subjects(ds)
 
@@ -157,7 +168,7 @@ def run_preprocess(
                     config,
                     config_fp,
                     force,
-                    str(dataset_output_dir),
+                    worker_output_dir,
                 )
             )
 
