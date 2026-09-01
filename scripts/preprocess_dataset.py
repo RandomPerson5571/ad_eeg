@@ -138,6 +138,9 @@ def run_preprocess(
         )
 
         participants = list_subjects(ds)
+        participant_index = participants[["participant_id", "Group"]].to_dict(
+            orient="records"
+        )
 
         if subject:
             participants = participants[
@@ -190,6 +193,7 @@ def run_preprocess(
             "preprocessed",
             batch,
             len(tasks),
+            extra_metadata={"participant_index": participant_index},
         )
 
         report_paths = write_preprocess_report(

@@ -31,11 +31,16 @@ REPO_BRANCH = "main"
 PROJECT_DIR = "/kaggle/temp/ad_eeg"  # temporary; excluded from saved notebook output
 OUTPUT_DIR = "/kaggle/working/pipeline_output"  # the only production artifact root
 
-# Kaggle dataset slug with raw EEG (must contain EEG_data/dataset2/ and dataset3/)
-RAW_EEG_INPUT = "REPLACE_WITH_RAW_EEG_DATASET_SLUG"
+# Raw EEG is used only by notebooks 00 and 01.
+RAW_EEG_INPUT = {raw_eeg_input}
 
-# Optional: output from a prior pipeline notebook (pipeline_output/data/, data/, or stage dirs at root)
-PIPELINE_INPUT = None  # e.g. "REPLACE_WITH_PRIOR_PIPELINE_OUTPUT_SLUG"
+# Prior notebook output is used by notebooks 02-08.
+PIPELINE_INPUT = {pipeline_input}
+
+# Generated stage contract; do not edit.
+NOTEBOOK_STAGE = "{stage}"
+REQUIRES_RAW_EEG = {requires_raw}
+REQUIRES_PIPELINE_INPUT = {requires_pipeline}
 '''
 
 KAGGLE_SETUP = '''\
@@ -124,21 +129,76 @@ def _print_storage(label: str) -> None:
     )
 
 
-def _pipeline_data_source(slug: str) -> Path:
-    base = Path("/kaggle/input") / slug
-    candidates = (base / "pipeline_output" / "data", base / "data", base)
+def _is_configured(value) -> bool:
+    return bool(value) and not str(value).startswith("REPLACE_WITH_")
+
+
+def _input_mount_candidates(locator: str) -> list[Path]:
+    """Accept a Kaggle slug, mounted path, or copied datasets/<owner>/<slug> path."""
+    value = str(locator).strip().rstrip("/")
+    supplied = Path(value)
+    candidates = [supplied] if supplied.is_absolute() else [Path("/kaggle/input") / supplied]
+    # Kaggle web paths are often copied as datasets/<owner>/<slug>, but the
+    # notebook mount uses only /kaggle/input/<slug>.
+    slug = supplied.name
+    mounted = Path("/kaggle/input") / slug
+    if mounted not in candidates:
+        candidates.append(mounted)
+    return candidates
+
+
+def _pipeline_data_source(locator: str) -> tuple[Path, str]:
     stage_dirs = {"audit", "preprocessed", "features", "models", "results"}
-    for candidate in candidates:
-        if candidate.is_dir() and any((candidate / name).exists() for name in stage_dirs):
-            return candidate
+    dataset_names = {"eyesclosed", "photomark", "dataset2", "dataset3"}
+    checked = []
+    mounts = _input_mount_candidates(locator)
+    for base in mounts:
+        for candidate in (
+            base / "pipeline_output" / "data",
+            base / "data",
+            base / "pipeline_output",
+            base,
+        ):
+            checked.append(candidate)
+            if candidate.is_dir() and any((candidate / name).exists() for name in stage_dirs):
+                return candidate, "data_tree"
+            # Older preprocessing outputs used
+            # pipeline_output/{dataset}/{experiment}/*_epo.fif directly.
+            if candidate.is_dir():
+                dataset_dirs = [
+                    candidate / name
+                    for name in dataset_names
+                    if (candidate / name).is_dir()
+                ]
+                if any(next(ds.rglob("*_epo.fif"), None) for ds in dataset_dirs):
+                    return candidate, "preprocessed_tree"
+
+        # Accept an extra wrapper directory introduced while creating a Kaggle
+        # Dataset, while still anchoring the layout at a known dataset name.
+        if base.is_dir():
+            epoch_file = next(base.rglob("*_epo.fif"), None)
+            if epoch_file is not None:
+                for parent in epoch_file.parents:
+                    if parent.name in dataset_names:
+                        return parent.parent, "preprocessed_tree"
+
+    mounted_contents = []
+    for base in mounts:
+        if base.is_dir():
+            mounted_contents.extend(
+                str(child.relative_to(base))
+                for child in sorted(base.iterdir())[:20]
+            )
     raise FileNotFoundError(
-        f"Pipeline input '{slug}' has no pipeline_output/data/ or data/ artifact tree. "
-        "Attach the previous notebook's saved output dataset."
+        f"Pipeline input '{locator}' has no recognized preprocessing or pipeline tree. "
+        f"Checked: {[str(path) for path in checked]}. Attach the previous notebook's "
+        "saved output dataset and use its mounted slug in PIPELINE_INPUT. "
+        f"Mounted top-level contents: {mounted_contents or ['<mount not found>']}"
     )
 
 
 def _restore_pipeline_data(slug: str) -> None:
-    pipeline_src = _pipeline_data_source(slug)
+    pipeline_src, layout = _pipeline_data_source(slug)
     source_bytes = _tree_size(pipeline_src)
     free_bytes = shutil.disk_usage(KAGGLE_WORKING_DIR).free
     reserve_bytes = 512 * 1024 ** 2
@@ -148,8 +208,35 @@ def _restore_pipeline_data(slug: str) -> None:
             f"{_gib(free_bytes):.2f} GiB is free in /kaggle/working. "
             "Use a compact upstream artifact or start a fresh Kaggle session."
         )
-    shutil.copytree(pipeline_src, OUTPUT_DATA_DIR, dirs_exist_ok=True)
-    print(f"Restored pipeline data from {pipeline_src}", flush=True)
+    if layout == "data_tree":
+        shutil.copytree(pipeline_src, OUTPUT_DATA_DIR, dirs_exist_ok=True)
+    else:
+        aliases = {
+            "eyesclosed": "eyesclosed",
+            "dataset2": "eyesclosed",
+            "photomark": "photomark",
+            "dataset3": "photomark",
+        }
+        restored = 0
+        for source_name, canonical_name in aliases.items():
+            source_dataset = pipeline_src / source_name
+            if not source_dataset.is_dir():
+                continue
+            shutil.copytree(
+                source_dataset,
+                OUTPUT_DATA_DIR / "preprocessed" / canonical_name,
+                dirs_exist_ok=True,
+            )
+            restored += 1
+        if not restored:
+            raise FileNotFoundError(
+                f"Found preprocessing files in {pipeline_src}, but no supported "
+                "dataset directory (eyesclosed/photomark/dataset2/dataset3)."
+            )
+    print(
+        f"Restored pipeline data from {pipeline_src} (layout={layout})",
+        flush=True,
+    )
     _print_storage("After restore")
 
 
@@ -170,29 +257,48 @@ def summarize_output() -> None:
     )
 
 
-def _find_eeg_root(slug: str) -> Path | None:
-    base = Path("/kaggle/input") / slug
-    if not base.exists():
-        return None
-    if (base / "EEG_data").is_dir():
-        return base / "EEG_data"
-    if (base / "dataset2").is_dir():
-        return base
-    for child in base.iterdir():
-        if child.is_dir() and (child / "EEG_data").is_dir():
-            return child / "EEG_data"
-        if child.is_dir() and (child / "dataset2").is_dir():
-            return child
+def _find_eeg_root(locator: str) -> Path | None:
+    for base in _input_mount_candidates(locator):
+        if not base.exists():
+            continue
+        if (base / "EEG_data").is_dir():
+            return base / "EEG_data"
+        if (base / "dataset2").is_dir() or (base / "dataset3").is_dir():
+            return base
+        for child in base.iterdir():
+            if child.is_dir() and (child / "EEG_data").is_dir():
+                return child / "EEG_data"
+            if child.is_dir() and (
+                (child / "dataset2").is_dir() or (child / "dataset3").is_dir()
+            ):
+                return child
     return None
 
 
 eeg_link = PROJECT_DIR / "EEG_data"
-if RAW_EEG_INPUT:
+if REQUIRES_PIPELINE_INPUT and not _is_configured(PIPELINE_INPUT):
+    if _is_configured(RAW_EEG_INPUT):
+        raise ValueError(
+            f"Notebook {NOTEBOOK_STAGE} consumes a prior pipeline artifact, not raw EEG. "
+            "Move the supplied value from RAW_EEG_INPUT to PIPELINE_INPUT."
+        )
+    raise ValueError(
+        f"Notebook {NOTEBOOK_STAGE} requires PIPELINE_INPUT. Attach the preceding "
+        "notebook's saved output dataset and enter its Kaggle slug."
+    )
+
+if REQUIRES_RAW_EEG and not _is_configured(RAW_EEG_INPUT):
+    raise ValueError(
+        f"Notebook {NOTEBOOK_STAGE} requires RAW_EEG_INPUT with EEG_data/dataset2/ "
+        "and/or dataset3/."
+    )
+
+if _is_configured(RAW_EEG_INPUT):
     src = _find_eeg_root(RAW_EEG_INPUT)
     if src is None:
         raise FileNotFoundError(
             f"Raw EEG not found for slug '{RAW_EEG_INPUT}'. "
-            "Add Data → your dataset with EEG_data/dataset2/ and dataset3/."
+            "Add Data → your dataset with EEG_data/dataset2/ and/or dataset3/."
         )
     if eeg_link.is_symlink():
         eeg_link.unlink()
@@ -204,7 +310,7 @@ if RAW_EEG_INPUT:
         os.symlink(src, eeg_link)
     print(f"EEG_data → {src}", flush=True)
 
-if PIPELINE_INPUT:
+if _is_configured(PIPELINE_INPUT):
     _restore_pipeline_data(PIPELINE_INPUT)
 '''
 
@@ -501,6 +607,11 @@ print(json.dumps(summary, indent=2, default=str))
 PREPROCESS_SAVE = '''\
 # Full-mode artifacts were written directly to the final output directory.
 if MODE == "full" and Path("/kaggle/input").exists():
+    from eeg.contracts import validate_preprocessed_artifacts
+
+    for dataset_spec in dataset_specs:
+        contract = validate_preprocessed_artifacts(dataset_spec.name, EXPERIMENT)
+        print(f"Output contract ({dataset_spec.name}):", contract)
     summarize_output()
 elif MODE != "full":
     print(f"MODE={MODE!r}: skipping Kaggle dataset publish (use MODE='full' for production output).")
@@ -520,6 +631,25 @@ INPUT_HINTS = {
 }
 
 
+RAW_INPUT_NOTEBOOKS = {"00", "01"}
+
+
+def _kaggle_config(nb_key: str) -> str:
+    requires_raw = nb_key in RAW_INPUT_NOTEBOOKS
+    requires_pipeline = not requires_raw
+    raw_value = '"REPLACE_WITH_RAW_EEG_DATASET_SLUG"' if requires_raw else "None"
+    pipeline_value = (
+        "None" if requires_raw else '"REPLACE_WITH_PRIOR_PIPELINE_OUTPUT_SLUG"'
+    )
+    return KAGGLE_CONFIG.format(
+        raw_eeg_input=raw_value,
+        pipeline_input=pipeline_value,
+        stage=nb_key,
+        requires_raw=requires_raw,
+        requires_pipeline=requires_pipeline,
+    )
+
+
 def _nb_cells(
     nb_key: str,
     title_md: str,
@@ -529,7 +659,7 @@ def _nb_cells(
 ):
     cells = [
         ("markdown", KAGGLE_INTRO + "\n" + INPUT_HINTS.get(nb_key, "")),
-        ("code", KAGGLE_CONFIG),
+        ("code", _kaggle_config(nb_key)),
     ]
     cells.extend(pre_setup_cells or [])
     cells.append(("code", KAGGLE_SETUP))
@@ -592,14 +722,16 @@ for spec in resolve_dataset("all"):
             ("markdown", "# 02 — Epoching\n\nExport `*_epo.fif` checkpoints to `.npy` for future DL."),
             ("code", CONFIG_CELL),
             ("code", '''\
+from eeg.contracts import validate_epoch_exports, validate_preprocessed_artifacts
 from eeg.export import export_all_epochs_npy
-import numpy as np
 
+upstream_contract = validate_preprocessed_artifacts(
+    CONFIG["dataset"], CONFIG["experiment"], require_participants=False
+)
+print("Input contract:", upstream_contract)
 paths = export_all_epochs_npy(CONFIG["dataset"], CONFIG["experiment"])
-print(f"Exported {len(paths)} subjects")
-if paths:
-    arr = np.load(paths[0])
-    print("shape:", arr.shape, "dtype:", arr.dtype)
+output_contract = validate_epoch_exports(paths)
+print("Output contract:", output_contract)
 '''),
         ],
     ),
@@ -610,8 +742,23 @@ if paths:
             ("markdown", "# 03 — Feature Extraction\n\nOne section per `biomarkers/` module."),
             ("code", CONFIG_CELL),
             ("code", '''\
+from eeg.contracts import validate_preprocessed_artifacts
+print(
+    "Input contract:",
+    validate_preprocessed_artifacts(CONFIG["dataset"], CONFIG["experiment"]),
+)
+
 from scripts.extract_features import run_extract
 run_extract(CONFIG["dataset"], CONFIG["experiment"], workers=2)
+
+from eeg.contracts import validate_feature_artifact
+from eeg.training.datasets import feature_columns
+print(
+    "Output contract:",
+    validate_feature_artifact(
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+    ),
+)
 '''),
             ("code", '''\
 from biomarkers import (
@@ -636,13 +783,21 @@ from eeg.config import resolve_dataset
 from eeg.feature_selection import select_features, save_selection_artifacts
 from eeg.io import load_features_df
 from eeg.training.datasets import feature_columns
+from eeg.contracts import validate_feature_artifact, validate_selection_artifacts
 
 spec = resolve_dataset(CONFIG["dataset"])[0]
+print(
+    "Input contract:",
+    validate_feature_artifact(
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+    ),
+)
 df = load_features_df(CONFIG["dataset"], CONFIG["experiment"], spec.id)
 cols = feature_columns()
 result = select_features(df, cols, config=CONFIG)
 paths = save_selection_artifacts(df, result, CONFIG["dataset"], CONFIG["experiment"])
 print(f"Selected {result.n_selected}/{result.n_input} features")
+print("Output contract:", validate_selection_artifacts(CONFIG["dataset"], CONFIG["experiment"]))
 display(result.importance.head(20))
 '''),
         ],
@@ -659,11 +814,23 @@ from eeg.io import load_features_df
 from eeg.config import resolve_dataset
 from eeg.training.datasets import feature_columns
 from eeg.training.benchmark import run_benchmark
+from eeg.contracts import (
+    validate_benchmark_artifacts,
+    validate_feature_artifact,
+    validate_selection_artifacts,
+)
 
 spec = resolve_dataset(CONFIG["dataset"])[0]
+print(
+    "Input contract:",
+    validate_feature_artifact(
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+    ),
+)
 df = load_features_df(CONFIG["dataset"], CONFIG["experiment"], spec.id)
 sel = select_features(df, feature_columns(), config=CONFIG)
 save_selection_artifacts(df, sel, CONFIG["dataset"], CONFIG["experiment"])
+print("Selection contract:", validate_selection_artifacts(CONFIG["dataset"], CONFIG["experiment"]))
 
 result = run_benchmark(
     dataset=CONFIG["dataset"],
@@ -673,6 +840,7 @@ result = run_benchmark(
     config=CONFIG,
 )
 import pandas as pd
+print("Output contract:", validate_benchmark_artifacts(CONFIG["dataset"], CONFIG["experiment"]))
 display(pd.read_csv(result["benchmark_csv"]))
 '''),
         ],
@@ -694,8 +862,11 @@ display(pd.read_csv(result["benchmark_csv"]))
 """),
             ("code", CONFIG_CELL),
             ("code", '''\
+from eeg.contracts import validate_epoch_exports
 from eeg.paths import epochs_npy_dir
-print("Epoch npy dir:", epochs_npy_dir(CONFIG["dataset"], CONFIG["experiment"]))
+epoch_dir = epochs_npy_dir(CONFIG["dataset"], CONFIG["experiment"])
+print("Epoch npy dir:", epoch_dir)
+print("Input contract:", validate_epoch_exports(sorted(epoch_dir.glob("sub-*.npy"))))
 '''),
         ],
         save=False,
@@ -708,8 +879,16 @@ print("Epoch npy dir:", epochs_npy_dir(CONFIG["dataset"], CONFIG["experiment"]))
             ("code", CONFIG_CELL),
             ("code", '''\
 from eeg.training.benchmark import run_benchmark
+from eeg.contracts import validate_benchmark_artifacts, validate_feature_artifact
+from eeg.training.datasets import feature_columns
 import pandas as pd
 
+print(
+    "Input contract:",
+    validate_feature_artifact(
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+    ),
+)
 ablations = ["baseline", "fast", "ica95", "no_asr", "no_ref", "no_overlap"]
 frames = []
 for exp in ablations:
@@ -724,6 +903,7 @@ for exp in ablations:
         df = pd.read_csv(r["benchmark_csv"])
         df["ablation"] = exp
         frames.append(df)
+        print(f"Output contract ({exp}):", validate_benchmark_artifacts(CONFIG["dataset"], exp))
     except Exception as e:
         print(f"Skip {exp}: {e}")
 
@@ -748,9 +928,17 @@ res = results_dir(CONFIG["dataset"], CONFIG["experiment"])
 fig = figures_dir(CONFIG["dataset"], CONFIG["experiment"])
 
 csv_files = list(Path("data/results").rglob("benchmark.csv"))
+if not csv_files:
+    raise FileNotFoundError(
+        "No benchmark.csv artifacts found. Attach notebook 05/07 output via PIPELINE_INPUT."
+    )
 frames = []
 for p in csv_files:
     df = pd.read_csv(p)
+    required = {"model", "dataset", "experiment", "balanced_accuracy"}
+    missing = sorted(required - set(df.columns))
+    if df.empty or missing:
+        raise ValueError(f"Invalid benchmark artifact {p}; missing={missing}")
     df["source"] = str(p.parent)
     frames.append(df)
 
@@ -820,6 +1008,16 @@ def validate_notebook(name: str, notebook: dict) -> None:
         raise ValueError(f"{name}: temporary repository path is missing")
     if 'OUTPUT_DIR = "/kaggle/working/pipeline_output"' not in code:
         raise ValueError(f"{name}: dedicated output root is missing")
+    if name.startswith(("00_", "01_")):
+        if 'RAW_EEG_INPUT = "REPLACE_WITH_RAW_EEG_DATASET_SLUG"' not in code:
+            raise ValueError(f"{name}: raw EEG input contract is missing")
+        if "PIPELINE_INPUT = None" not in code:
+            raise ValueError(f"{name}: must not require prior pipeline output")
+    else:
+        if "RAW_EEG_INPUT = None" not in code:
+            raise ValueError(f"{name}: downstream stage must not require raw EEG")
+        if 'PIPELINE_INPUT = "REPLACE_WITH_PRIOR_PIPELINE_OUTPUT_SLUG"' not in code:
+            raise ValueError(f"{name}: prior-stage pipeline input contract is missing")
 
 
 for name, spec in NOTEBOOKS.items():

@@ -7,8 +7,13 @@ from typing import Iterable
 
 import numpy as np
 
-from eeg.io import list_subjects, load_checkpoint
-from eeg.paths import checkpoint_path, epochs_npy_dir, resolve_checkpoint_path
+from eeg.io import load_checkpoint
+from eeg.paths import (
+    STAGE_SUFFIX,
+    epochs_npy_dir,
+    preprocessed_dir,
+    resolve_checkpoint_path,
+)
 
 
 def _normalize_epochs(data: np.ndarray, method: str | None) -> np.ndarray:
@@ -50,20 +55,24 @@ def export_all_epochs_npy(
     subjects: Iterable[str] | None = None,
     normalize: str | None = None,
 ) -> list[Path]:
-    """Batch-export epoch arrays for all (or selected) subjects."""
-    from eeg.config import resolve_dataset
-
-    spec = resolve_dataset(dataset)[0]
-    participants = list_subjects(spec)
+    """Batch-export every available epoch checkpoint without requiring raw EEG."""
+    suffix = STAGE_SUFFIX["epochs"]
+    participants = [
+        path.name[: -len(suffix)]
+        for path in sorted(preprocessed_dir(dataset, experiment).glob(f"*{suffix}"))
+    ]
     if subjects is not None:
         subject_set = set(subjects)
-        participants = participants[participants["participant_id"].isin(subject_set)]
+        participants = [pid for pid in participants if pid in subject_set]
+
+    if not participants:
+        raise FileNotFoundError(
+            "No epoch checkpoints found in "
+            f"{preprocessed_dir(dataset, experiment)}. Attach notebook 01's full-mode "
+            "pipeline output and set PIPELINE_INPUT to it."
+        )
 
     paths: list[Path] = []
-    for _, row in participants.iterrows():
-        pid = row["participant_id"]
-        try:
-            paths.append(export_epochs_npy(dataset, experiment, pid, normalize=normalize))
-        except FileNotFoundError:
-            continue
+    for pid in participants:
+        paths.append(export_epochs_npy(dataset, experiment, pid, normalize=normalize))
     return paths

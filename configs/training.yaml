@@ -1,5 +1,13 @@
 test_size: 0.2
 random_state: 42
+cv_folds: 5
+inner_cv_folds: 3
+bootstrap_iterations: 1000
+
+feature_selection:
+  variance_threshold: 0.0
+  correlation_threshold: 0.95
+  top_k: null
 
 xgboost:
   n_iter: 10

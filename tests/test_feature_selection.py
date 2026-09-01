@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from eeg.feature_selection import select_features
+from eeg.feature_selection import FoldFeatureSelector, select_features
 
 
 def _synthetic_df(n=60, n_features=10, seed=0):
@@ -35,3 +35,13 @@ def test_select_features_top_k():
         df, cols, config={"seed": 42, "feature_selection": {"top_k": 3, "correlation_threshold": 0.99}}
     )
     assert len(result.selected_columns) == 3
+
+
+def test_fold_feature_selector_uses_fit_partition_only():
+    train = pd.DataFrame({"stable": [0, 1, 2, 3], "train_constant": [1, 1, 1, 1]})
+    held_out = pd.DataFrame({"stable": [4, 5], "train_constant": [2, 3]})
+    selector = FoldFeatureSelector(correlation_threshold=0.99, random_state=0)
+    selector.fit(train, np.array([0, 0, 1, 1]))
+
+    assert selector.selected_columns_ == ["stable"]
+    assert list(selector.transform(held_out).columns) == ["stable"]

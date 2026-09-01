@@ -23,8 +23,12 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run,
 3. **Settings → Accelerator → None** (CPU; GPU not needed for Phase 1).
 4. **Add Data** → attach datasets (see config cell in each notebook).
 5. Edit the config cell:
-   - `RAW_EEG_INPUT` — slug of dataset with `EEG_data/dataset2/` and `dataset3/`
-   - `PIPELINE_INPUT` — slug of prior notebook output (accepts `pipeline_output/data/` or `data/`)
+   - notebooks 00–01: set `RAW_EEG_INPUT` to the dataset with
+     `EEG_data/dataset2/` and/or `dataset3/`
+   - notebooks 02–08: set `PIPELINE_INPUT` to the preceding notebook's saved
+     output dataset; leave `RAW_EEG_INPUT = None`
+   - use the mounted dataset slug (for example `preprocessed-eeg-data`), not a
+     Kaggle web path such as `datasets/owner/preprocessed-eeg-data`
 6. Run all cells.
 7. **Save Version** with output → **Create Dataset** for the next notebook.
 
@@ -50,14 +54,34 @@ In `inspect` and `test` modes, preprocessing checkpoints stay under `/kaggle/tem
 
 Before restoring an upstream dataset, the setup cell checks available space and reserves 512 MiB. Every production stage reports current artifact size and free `/kaggle/working` capacity.
 
+The restore step accepts both the current `pipeline_output/data/preprocessed/...`
+tree and the earlier direct preprocessing tree
+`pipeline_output/{dataset}/{experiment}/*_epo.fif`. Legacy trees are mapped into
+the downstream notebook's working view without modifying the attached dataset.
+
 ## Chaining example
 
 ```text
-00_audit     → Save as "eeg-audit-v1"
-01_preprocess (RAW_EEG) → Save as "eeg-preprocessed-baseline-v1"
-03_features  (PIPELINE_INPUT=eeg-preprocessed-baseline-v1) → Save as "eeg-features-v1"
-05_ml        (PIPELINE_INPUT=eeg-features-v1) → Save as "eeg-benchmark-v1"
+00_audit       (RAW_EEG_INPUT=raw-eeg) → optional audit dataset
+01_preprocess  (RAW_EEG_INPUT=raw-eeg) → eeg-preprocessed-v1
+02_epoching    (PIPELINE_INPUT=eeg-preprocessed-v1) → eeg-epochs-v1
+03_features    (PIPELINE_INPUT=eeg-epochs-v1) → eeg-features-v1
+04_selection   (PIPELINE_INPUT=eeg-features-v1) → eeg-selected-v1
+05_ml          (PIPELINE_INPUT=eeg-selected-v1) → eeg-benchmark-v1
+08_final       (PIPELINE_INPUT=eeg-benchmark-v1) → final results
 ```
+
+Notebook 01 stores a compact participant/label index inside its existing
+`metadata.json`; it does not add or rearrange preprocessing output paths. This
+index supplies labels to notebook 03, so raw EEG is not a hidden downstream
+dependency. Notebook 02 enumerates the saved `*_epo.fif` files directly and
+exports each one as a float32 array with shape
+`(n_epochs, n_channels, n_samples)`.
+
+Every production notebook runs an input contract before its stage and an output
+contract afterward. Contracts check required files, identity/label columns, and
+array/table shapes so an incompatible artifact fails in the notebook that
+produced or first consumes it.
 
 ## Path aliases
 

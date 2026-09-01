@@ -5,12 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.calibration import CalibrationDisplay
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     classification_report,
     cohen_kappa_score,
@@ -59,11 +63,17 @@ def compute_benchmark_metrics(
                 metrics["macro_roc_auc"] = float(
                     roc_auc_score(y_bin, y_proba, average="macro", multi_class="ovr")
                 )
-            prec, rec, _ = precision_recall_curve(
-                label_binarize(y_true, classes=labels).ravel(),
-                y_proba.ravel(),
-            )
-            metrics["macro_pr_auc"] = float(np.trapezoid(prec, rec))
+            if len(labels) == 2:
+                metrics["macro_pr_auc"] = float(
+                    average_precision_score(
+                        np.asarray(y_true) == labels[1], np.asarray(y_proba)[:, 1]
+                    )
+                )
+            else:
+                y_bin = label_binarize(y_true, classes=labels)
+                metrics["macro_pr_auc"] = float(
+                    average_precision_score(y_bin, y_proba, average="macro")
+                )
         except (ValueError, IndexError):
             metrics["macro_roc_auc"] = None
             metrics["macro_pr_auc"] = None
@@ -91,13 +101,24 @@ def bootstrap_ci(
     n: int = 1000,
     seed: int = 42,
     alpha: float = 0.05,
+    strata=None,
 ) -> tuple[float, float, float]:
-    """Percentile bootstrap CI for a scalar metric."""
+    """Percentile bootstrap CI, optionally resampling within each stratum."""
     rng = np.random.default_rng(seed)
     n_samples = len(y_true)
+    strata_array = np.asarray(strata) if strata is not None else None
     scores = []
     for _ in range(n):
-        idx = rng.integers(0, n_samples, n_samples)
+        if strata_array is None:
+            idx = rng.integers(0, n_samples, n_samples)
+        else:
+            idx = np.concatenate(
+                [
+                    rng.choice(class_idx, size=len(class_idx), replace=True)
+                    for value in np.unique(strata_array)
+                    if len(class_idx := np.flatnonzero(strata_array == value))
+                ]
+            )
         yt = np.asarray(y_true)[idx]
         yp = np.asarray(y_pred)[idx]
         ypr = y_proba[idx] if y_proba is not None else None

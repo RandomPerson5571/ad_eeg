@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.metrics import average_precision_score
 
 from eeg.training.benchmark import MODEL_REGISTRY, run_benchmark
 from eeg.training.evaluation import bootstrap_ci, compute_benchmark_metrics
@@ -32,6 +33,10 @@ def test_compute_benchmark_metrics_multiclass():
     assert "balanced_accuracy" in m
     assert "mcc" in m
     assert "per_class" in m
+    expected_ap = average_precision_score(
+        np.eye(3, dtype=int)[y_true], y_proba, average="macro"
+    )
+    assert m["macro_pr_auc"] == pytest.approx(expected_ap)
 
 
 def test_bootstrap_ci():
@@ -46,11 +51,11 @@ def test_bootstrap_ci():
 
 
 def test_run_benchmark_smoke(tmp_path, monkeypatch):
-    """Minimal feature frame with 6 subjects for 3-fold CV."""
+    """Minimal feature frame with enough subjects for nested 3x2 grouped CV."""
     rng = np.random.default_rng(0)
     n = 30
     rows = []
-    for sid in range(6):
+    for sid in range(12):
         for _ in range(5):
             rows.append(
                 {
@@ -99,7 +104,12 @@ def test_run_benchmark_smoke(tmp_path, monkeypatch):
         dataset="eyesclosed",
         experiment="baseline",
         models=["logistic_regression"],
-        config={"seed": 42, "cv_folds": 3},
+        config={
+            "seed": 42,
+            "cv_folds": 3,
+            "inner_cv_folds": 2,
+            "bootstrap_iterations": 30,
+        },
         cv_folds=3,
     )
     from pathlib import Path
@@ -107,3 +117,16 @@ def test_run_benchmark_smoke(tmp_path, monkeypatch):
     assert Path(result["benchmark_csv"]).exists()
     meta_path = tmp_path / "results" / "eyesclosed" / "baseline" / "benchmark_metadata.json"
     assert meta_path.exists()
+    predictions = pd.read_csv(
+        tmp_path / "results" / "eyesclosed" / "baseline" / "predictions.csv"
+    )
+    epoch_predictions = pd.read_csv(
+        tmp_path / "results" / "eyesclosed" / "baseline" / "epoch_predictions.csv"
+    )
+    assert len(predictions) == 12
+    assert predictions["participant_id"].nunique() == 12
+    assert len(epoch_predictions) == len(df)
+    details = result["benchmark_detail"]["logistic_regression"]
+    assert len(details["fold_details"]) == 3
+    assert all(fold["inner_cv_folds"] == 2 for fold in details["fold_details"])
+    assert all(fold["selected_features"] for fold in details["fold_details"])

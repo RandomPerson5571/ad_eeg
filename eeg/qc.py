@@ -187,11 +187,34 @@ def log_to_summary_row(log: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def compute_snr(epochs: mne.Epochs) -> float:
-    data = epochs.get_data()
-    signal_power = np.mean(data**2)
-    noise_floor = np.percentile(np.abs(data), 10) ** 2
-    return float(10 * np.log10(signal_power / noise_floor)) if noise_floor > 0 else 0.0
+def compute_snr(
+    epochs: mne.Epochs,
+    signal_band: tuple[float, float] = (1.0, 30.0),
+    noise_band: tuple[float, float] = (30.0, 40.0),
+) -> float:
+    """Estimate spectral SNR as EEG-band power / high-frequency noise power.
+
+    This is a QC proxy for resting EEG, not reconstruction SNR: no clean
+    reference signal exists at this stage. Both numerator and denominator are
+    integrated Welch PSD powers, so the returned dB value has the standard
+    ``10 * log10(P_signal / P_noise)`` definition.
+    """
+    fmin = min(signal_band[0], noise_band[0])
+    fmax = max(signal_band[1], noise_band[1])
+    spectrum = epochs.compute_psd(method="welch", fmin=fmin, fmax=fmax, verbose=False)
+    psd, freqs = spectrum.get_data(return_freqs=True)
+
+    def _integrated_power(band: tuple[float, float]) -> float:
+        mask = (freqs >= band[0]) & (freqs < band[1])
+        if mask.sum() < 2:
+            return 0.0
+        return float(np.trapezoid(psd[..., mask], freqs[mask], axis=-1).mean())
+
+    signal_power = _integrated_power(signal_band)
+    noise_power = _integrated_power(noise_band)
+    if signal_power <= 0 or noise_power <= 0:
+        return 0.0
+    return float(10.0 * np.log10(signal_power / noise_power))
 
 
 def load_subject_log(dataset_name: str, experiment: str, participant_id: str) -> dict[str, Any] | None:

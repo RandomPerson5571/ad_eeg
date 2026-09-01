@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_selection import VarianceThreshold, mutual_info_classif
 
 from eeg.paths import feature_importance_path, selected_features_path
@@ -20,6 +21,66 @@ class SelectionResult:
     n_after_variance: int
     n_after_correlation: int
     n_selected: int
+
+
+class FoldFeatureSelector(BaseEstimator, TransformerMixin):
+    """Fold-local variance/correlation/MI feature selector.
+
+    The transformer is intentionally sklearn-compatible so putting it at the
+    front of a ``Pipeline`` makes every CV split learn its feature set from the
+    corresponding training partition only.
+    """
+
+    def __init__(
+        self,
+        variance_threshold: float = 0.0,
+        correlation_threshold: float = 0.95,
+        top_k: int | None = None,
+        random_state: int = 42,
+    ):
+        self.variance_threshold = variance_threshold
+        self.correlation_threshold = correlation_threshold
+        self.top_k = top_k
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        frame = self._as_frame(X, fitting=True)
+        result = _select_from_xy(
+            frame,
+            np.asarray(y),
+            variance_threshold=self.variance_threshold,
+            correlation_threshold=self.correlation_threshold,
+            top_k=self.top_k,
+            random_state=self.random_state,
+        )
+        self.selected_columns_ = result.selected_columns
+        self.importance_ = result.importance
+        self.n_features_in_ = frame.shape[1]
+        if not self.selected_columns_:
+            raise ValueError("Feature selection removed every candidate feature.")
+        return self
+
+    def transform(self, X):
+        frame = self._as_frame(X, fitting=False)
+        missing = [c for c in self.selected_columns_ if c not in frame.columns]
+        if missing:
+            raise ValueError(f"Feature columns missing at transform time: {missing}")
+        return frame.loc[:, self.selected_columns_]
+
+    def get_feature_names_out(self, input_features=None):
+        return np.asarray(self.selected_columns_, dtype=object)
+
+    def _as_frame(self, X, *, fitting: bool) -> pd.DataFrame:
+        if isinstance(X, pd.DataFrame):
+            if fitting:
+                self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+            return X.copy()
+        values = np.asarray(X)
+        if fitting:
+            self.feature_names_in_ = np.asarray(
+                [f"feature_{i}" for i in range(values.shape[1])], dtype=object
+            )
+        return pd.DataFrame(values, columns=self.feature_names_in_)
 
 
 def _correlation_filter(df: pd.DataFrame, threshold: float = 0.95) -> list[str]:
@@ -37,6 +98,42 @@ def _correlation_filter(df: pd.DataFrame, threshold: float = 0.95) -> list[str]:
     return [c for c in df.columns if c not in to_drop]
 
 
+def _select_from_xy(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    *,
+    variance_threshold: float,
+    correlation_threshold: float,
+    top_k: int | None,
+    random_state: int,
+) -> SelectionResult:
+    feature_cols = list(X.columns)
+    n_input = len(feature_cols)
+    clean = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    vt = VarianceThreshold(threshold=variance_threshold)
+    vt.fit(clean)
+    kept = [c for c, keep in zip(feature_cols, vt.get_support()) if keep]
+    X_var = clean[kept]
+
+    kept_corr = _correlation_filter(X_var, threshold=correlation_threshold)
+    X_corr = X_var[kept_corr]
+    mi = mutual_info_classif(X_corr, y, random_state=random_state)
+    importance = pd.DataFrame({"feature": kept_corr, "mi_score": mi}).sort_values(
+        "mi_score", ascending=False
+    )
+    selected = importance.head(top_k)["feature"].tolist() if top_k is not None else kept_corr
+
+    return SelectionResult(
+        selected_columns=selected,
+        importance=importance,
+        n_input=n_input,
+        n_after_variance=len(kept),
+        n_after_correlation=len(kept_corr),
+        n_selected=len(selected),
+    )
+
+
 def select_features(
     df: pd.DataFrame,
     feature_cols: list[str],
@@ -50,37 +147,14 @@ def select_features(
     corr_threshold = sel_cfg.get("correlation_threshold", 0.95)
     top_k = sel_cfg.get("top_k", None)
 
-    X = df[feature_cols].copy()
-    n_input = len(feature_cols)
-
-    vt = VarianceThreshold(threshold=var_threshold)
-    vt.fit(X)
-    kept = [c for c, keep in zip(feature_cols, vt.get_support()) if keep]
-    X_var = X[kept]
-    n_after_variance = len(kept)
-
-    kept_corr = _correlation_filter(X_var, threshold=corr_threshold)
-    X_corr = X_var[kept_corr]
-    n_after_correlation = len(kept_corr)
-
     y = df[label_col].astype("category").cat.codes.values
-    mi = mutual_info_classif(X_corr.fillna(0), y, random_state=cfg.get("seed", 42))
-    importance = pd.DataFrame({"feature": kept_corr, "mi_score": mi}).sort_values(
-        "mi_score", ascending=False
-    )
-
-    if top_k is not None:
-        selected = importance.head(top_k)["feature"].tolist()
-    else:
-        selected = kept_corr
-
-    return SelectionResult(
-        selected_columns=selected,
-        importance=importance,
-        n_input=n_input,
-        n_after_variance=n_after_variance,
-        n_after_correlation=n_after_correlation,
-        n_selected=len(selected),
+    return _select_from_xy(
+        df[feature_cols].copy(),
+        y,
+        variance_threshold=var_threshold,
+        correlation_threshold=corr_threshold,
+        top_k=top_k,
+        random_state=cfg.get("seed", 42),
     )
 
 

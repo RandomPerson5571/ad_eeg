@@ -49,30 +49,38 @@ Per epoch, the following features are computed:
 | rel_alpha, rel_beta, rel_theta, rel_delta | Relative band power (Welch PSD, `N_FFT=512`, resolution ≈ 1 Hz) |
 | alpha_peak_freq | Peak frequency in alpha band |
 | theta_alpha_ratio, theta_beta_ratio, slow_fast_ratio | Spectral ratios |
-| theta_wpli, alpha_wpli | Weighted phase lag index connectivity (theta 4–8 Hz, alpha 8–13 Hz) |
+| theta_wpli, alpha_wpli | Mean weighted phase lag index over unique off-diagonal channel pairs (theta 4–8 Hz, alpha 8–13 Hz) |
 
 Implementation: `eeg/features.py`, `biomarkers/`.
 
-## Train/test split
+## Evaluation
 
-**Subject-level split** via `GroupShuffleSplit` in `eeg/training.py`:
+Evaluation uses nested subject-stratified grouped cross-validation: subjects are
+stratified first, then each split is expanded to all of that subject's epochs.
 
-- All epochs from one participant stay in the same fold
-- Default: `configs/training.yaml` (`test_size: 0.2`, `random_state: 42`)
-- Split IDs saved in `data/results/{dataset}/{experiment}/subject_splits.json`
+- All epochs from one participant stay together in every inner and outer split.
+- Variance, correlation, and mutual-information feature selection are fitted inside each fold.
+- Inner folds select hyperparameters; outer folds produce unbiased out-of-fold (OOF) predictions.
+- Epoch probabilities are averaged per participant before classification and scoring.
+- Reported metrics, plots, and bootstrap confidence intervals use all outer-fold subject OOF predictions.
+- PR AUC is macro one-vs-rest average precision (binary runs use positive-class average precision).
+- `predictions.csv` contains one row per subject; `epoch_predictions.csv` retains diagnostic epoch outputs.
+
+Fold assignments, selected features, and inner-CV parameters are saved in
+`benchmark_detail.json`. Defaults are defined in `configs/training.yaml`.
 
 ```bash
 python scripts/train_model.py --dataset eyesclosed --experiment baseline --model xgboost,mlp
 ```
 
-Training produces ROC curves and confusion matrices inline (no separate evaluate stage).
+Training produces OOF ROC, precision-recall, calibration, and confusion-matrix figures.
 
 ## Models
 
 | Script | Model | Notes |
 |--------|-------|-------|
-| `scripts/train_model.py` | XGBoost + TargetEncoder | Bayesian hyperparameter search |
-| `scripts/train_model.py` | MLP (128, 64) + StandardScaler | Early stopping |
+| `scripts/train_model.py` | XGBoost | Nested grouped grid search |
+| `scripts/train_model.py` | MLP (128, 64) + StandardScaler | Nested grouped grid search |
 
 Legacy trainers in `classifier_models/` remain as thin wrappers.
 

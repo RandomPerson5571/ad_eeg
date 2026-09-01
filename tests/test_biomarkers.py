@@ -15,6 +15,7 @@ from biomarkers import (
 from biomarkers.complexity import lempel_ziv_complexity
 from classifier_models.train_utils import validate_feature_schema
 from config import ALL_CHANNELS, FEATURE_COLUMNS, REGIONAL_CHANNELS, SAMPLING_RATE, parquet_path
+from eeg.qc import compute_snr
 from util.extract_features import extract_eeg_features
 
 
@@ -59,6 +60,33 @@ def test_connectivity_returns_scalar_bands():
     for key, value in features.items():
         assert np.isscalar(value), f"{key} should be scalar"
         assert np.isfinite(value), f"{key} should be finite"
+
+
+def test_connectivity_averages_unique_off_diagonal_edges(monkeypatch):
+    import biomarkers.connectivity as connectivity_module
+
+    captured_indices = []
+
+    class FakeConnectivity:
+        def get_data(self):
+            return np.array([[0.2], [0.4], [0.6]])
+
+    def fake_connectivity(**kwargs):
+        captured_indices.append(kwargs["indices"])
+        return FakeConnectivity()
+
+    monkeypatch.setattr(
+        connectivity_module, "spectral_connectivity_epochs", fake_connectivity
+    )
+    epochs = _synthetic_epochs(n_epochs=2, n_channels=3)
+    result = connectivity_module.compute_connectivity(epochs)
+
+    assert result == {
+        "theta_wpli": pytest.approx(0.4),
+        "alpha_wpli": pytest.approx(0.4),
+    }
+    for sources, targets in captured_indices:
+        assert list(zip(sources, targets)) == [(0, 1), (0, 2), (1, 2)]
 
 
 def test_normalize_signal_zero_std():
@@ -145,3 +173,18 @@ def test_theta_dominant_sine_has_higher_theta_alpha_ratio():
     alpha_features = compute_band_power(alpha_epoch, target_channels=None)
 
     assert theta_features["theta_alpha_ratio"] > alpha_features["theta_alpha_ratio"]
+
+
+def test_spectral_snr_is_signal_to_noise_power_ratio():
+    rng = np.random.default_rng(10)
+    n_times = 2000
+    t = np.arange(n_times) / SAMPLING_RATE
+    info = mne.create_info(["Cz"], sfreq=SAMPLING_RATE, ch_types="eeg")
+    low_noise = np.sin(2 * np.pi * 10 * t) + 0.05 * np.sin(2 * np.pi * 35 * t)
+    high_noise = np.sin(2 * np.pi * 10 * t) + 0.8 * np.sin(2 * np.pi * 35 * t)
+    low_noise += rng.normal(0, 0.005, n_times)
+    high_noise += rng.normal(0, 0.005, n_times)
+    clean = mne.EpochsArray(low_noise[np.newaxis, np.newaxis, :], info)
+    noisy = mne.EpochsArray(high_noise[np.newaxis, np.newaxis, :], info)
+
+    assert compute_snr(clean) > compute_snr(noisy)

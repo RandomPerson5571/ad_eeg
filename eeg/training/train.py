@@ -22,7 +22,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from skopt import BayesSearchCV
 from skopt.space import Integer, Real
-from xgboost import XGBClassifier
 
 from eeg.config import load_base_configs, load_experiment
 from eeg.io import write_json
@@ -87,6 +86,8 @@ def _plot_roc_legacy(y_true, y_proba, label_encoder, out_path: Path) -> None:
 
 
 def train_xgboost(dataset_name: str, experiment: str, dataset_id: int, config: dict | None = None):
+    from xgboost import XGBClassifier
+
     cfg = config or load_experiment(experiment)
     train_cfg = cfg["training"]
     random_state = train_cfg.get("random_state", 42)
@@ -227,18 +228,20 @@ def train_models(
     models: list[str],
     config: dict | None = None,
 ) -> dict[str, Any]:
-    results = {}
-    for model in models:
-        name = model.strip().lower()
-        if name == "xgboost":
-            _, metrics = train_xgboost(dataset_name, experiment, dataset_id, config)
-            results["xgboost"] = metrics
-        elif name == "mlp":
-            _, metrics = train_mlp(dataset_name, experiment, dataset_id, config)
-            results["mlp"] = metrics
-        else:
-            raise ValueError(f"Unknown model: {model}")
+    """Train requested models through the leakage-safe benchmark path.
 
-    combined_path = results_dir(dataset_name, experiment) / "metrics.json"
-    write_json(combined_path, results)
+    The single-model helpers above remain for artifact compatibility, but the
+    public pipeline entry point must not report a one-off holdout as evaluation.
+    """
+    from eeg.training.benchmark import run_benchmark
+
+    model_keys = [model.strip().lower() for model in models]
+    benchmark = run_benchmark(
+        dataset=dataset_name,
+        experiment=experiment,
+        models=model_keys,
+        config=config,
+    )
+    results = {row["model"]: row for row in benchmark["rows"]}
+    write_json(results_dir(dataset_name, experiment) / "metrics.json", results)
     return results

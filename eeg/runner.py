@@ -48,6 +48,7 @@ def update_experiment_metadata(
     stage: str,
     batch: BatchResult,
     n_subjects: int,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> Path:
     path = experiment_metadata_path(dataset_name, experiment_name, stage)
     meta = experiment_metadata(
@@ -58,6 +59,7 @@ def update_experiment_metadata(
         n_completed=batch.completed,
         n_skipped=batch.skipped,
         n_failed=batch.failed,
+        **(extra_metadata or {}),
     )
     write_json(path, meta)
     return path

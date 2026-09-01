@@ -17,7 +17,7 @@ from eeg.config import config_fingerprint, load_experiment
 from eeg.features import extract_from_epochs
 from eeg.io import (
     load_checkpoint,
-    list_subjects,
+    list_preprocessed_subjects,
     merge_features_parquet,
     prepare_feature_rows,
     read_json,
@@ -134,7 +134,7 @@ def run_extract(
     all_results = []
 
     for ds in datasets:
-        participants = list_subjects(ds)
+        participants = list_preprocessed_subjects(ds, experiment)
         if subject:
             participants = participants[participants["participant_id"] == subject]
 

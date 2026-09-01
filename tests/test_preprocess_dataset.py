@@ -24,7 +24,12 @@ def _patch_preprocess_run(monkeypatch, tmp_path):
         "raw_eeg_path",
         lambda ds, subject_num: tmp_path / "sub-001.set",
     )
-    monkeypatch.setattr(preprocess_dataset, "update_experiment_metadata", lambda *a, **k: None)
+    metadata_calls = []
+    monkeypatch.setattr(
+        preprocess_dataset,
+        "update_experiment_metadata",
+        lambda *args, **kwargs: metadata_calls.append((args, kwargs)),
+    )
     monkeypatch.setattr(
         preprocess_dataset,
         "write_preprocess_report",
@@ -37,21 +42,25 @@ def _patch_preprocess_run(monkeypatch, tmp_path):
         return []
 
     monkeypatch.setattr(preprocess_dataset, "run_parallel", fake_parallel)
-    return captured
+    return captured, metadata_calls
 
 
 def test_default_output_uses_canonical_preprocessing_paths(tmp_path, monkeypatch):
     canonical = tmp_path / "data" / "preprocessed" / "eyesclosed" / "baseline"
     monkeypatch.setattr(preprocess_dataset, "preprocessed_dir", lambda ds, exp: canonical)
-    captured = _patch_preprocess_run(monkeypatch, tmp_path)
+    captured, metadata_calls = _patch_preprocess_run(monkeypatch, tmp_path)
 
     preprocess_dataset.run_preprocess("eyesclosed", "baseline")
 
     assert captured[0][-1] is None
+    assert not (canonical / "participants.tsv").exists()
+    assert metadata_calls[0][1]["extra_metadata"] == {
+        "participant_index": [{"participant_id": "sub-001", "Group": "A"}]
+    }
 
 
 def test_custom_output_is_dataset_and_experiment_scoped(tmp_path, monkeypatch):
-    captured = _patch_preprocess_run(monkeypatch, tmp_path)
+    captured, _ = _patch_preprocess_run(monkeypatch, tmp_path)
     custom_root = tmp_path / "pipeline_output"
 
     preprocess_dataset.run_preprocess(
@@ -61,3 +70,6 @@ def test_custom_output_is_dataset_and_experiment_scoped(tmp_path, monkeypatch):
     )
 
     assert captured[0][-1] == str(custom_root / "eyesclosed" / "baseline")
+    assert not (
+        custom_root / "eyesclosed" / "baseline" / "participants.tsv"
+    ).exists()

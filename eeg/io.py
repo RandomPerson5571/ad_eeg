@@ -17,8 +17,10 @@ from eeg.config import load_base_configs
 from eeg.paths import (
     LEGACY_STAGE_SUFFIX,
     STAGE_SUFFIX,
+    experiment_metadata_path,
     features_parquet_path,
     legacy_parquet_path,
+    preprocessed_dir,
     resolve_features_path,
 )
 
@@ -132,6 +134,27 @@ def list_subjects(dataset_spec) -> pd.DataFrame:
     df = pd.read_csv(tsv, sep="\t")
     df["Dataset"] = dataset_spec.id
     return df
+
+
+def list_preprocessed_subjects(dataset_spec, experiment: str) -> pd.DataFrame:
+    """Load labels from raw data or the existing preprocessing metadata artifact."""
+    raw_path = dataset_spec.raw_dir / "participants.tsv"
+    if raw_path.is_file():
+        df = pd.read_csv(raw_path, sep="\t")
+        df["Dataset"] = dataset_spec.id
+        return df
+
+    metadata_path = experiment_metadata_path(dataset_spec.name, experiment)
+    if metadata_path.is_file():
+        participant_index = read_json(metadata_path).get("participant_index", [])
+        if participant_index:
+            df = pd.DataFrame(participant_index)
+            df["Dataset"] = dataset_spec.id
+            return df
+    raise FileNotFoundError(
+        f"Participant metadata not found at {raw_path} or in {metadata_path}. "
+        "Re-run notebook 01 in full mode so metadata.json includes participant_index."
+    )
 
 
 def save_features_parquet(

@@ -106,7 +106,7 @@ Random seed: `ica_random_state` (default **97**).
 |------|--------|
 | Segmentation | Fixed-length epochs: **4 s** windows, **2 s** overlap (`mne.make_fixed_length_epochs`) |
 | AutoReject | `autoreject.AutoReject(n_interpolate=[1,2,3,4], random_state=11)`; fit on first ≤20 epochs |
-| SNR | Post-AR signal-to-noise estimate stored in subject log |
+| SNR | Post-AR spectral QC estimate: integrated 1–30 Hz power / 30–40 Hz high-frequency noise power, in dB |
 
 ERP-locked epoching (`erp: true`) is not implemented in the staged pipeline.
 

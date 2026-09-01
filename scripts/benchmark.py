@@ -28,19 +28,16 @@ def parse_args():
 
 def build_config(experiment: str) -> dict:
     cfg = load_experiment(experiment)
-    return {
-        "dataset": None,
-        "experiment": experiment,
-        "seed": cfg.get("training", {}).get("random_state", 42),
-        "cv_folds": cfg.get("training", {}).get("cv_folds", 5),
-        **cfg.get("experiment", {}),
-    }
+    cfg["seed"] = cfg.get("training", {}).get("random_state", 42)
+    cfg["dataset_name"] = None
+    cfg["experiment_name"] = experiment
+    return cfg
 
 
 if __name__ == "__main__":
     args = parse_args()
     config = build_config(args.experiment)
-    config["dataset"] = args.dataset
+    config["dataset_name"] = args.dataset
     init_repro(config["seed"])
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     result = run_benchmark(
