@@ -4,11 +4,13 @@ import json
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from eeg.contracts import (
     ArtifactContractError,
     validate_epoch_exports,
+    validate_feature_artifact,
     validate_preprocessed_artifacts,
 )
 from eeg.export import export_all_epochs_npy
@@ -150,3 +152,19 @@ def test_legacy_metadata_uses_configured_labels_for_available_epochs(
         {"participant_id": "sub-001", "Group": "A"},
         {"participant_id": "sub-066", "Group": "F"},
     ]
+
+
+def test_feature_contract_rejects_partial_subject_cohort(tmp_path, monkeypatch):
+    preprocessed = tmp_path / "preprocessed"
+    preprocessed.mkdir()
+    (preprocessed / "sub-001_epo.fif").touch()
+    (preprocessed / "sub-002_epo.fif").touch()
+    features = tmp_path / "subject_features.parquet"
+    pd.DataFrame(
+        [{"participant_id": "sub-001", "label": "A", "alpha": 1.0}]
+    ).to_parquet(features, index=False)
+    monkeypatch.setattr("eeg.contracts.preprocessed_dir", lambda *_: preprocessed)
+    monkeypatch.setattr("eeg.contracts.features_parquet_path", lambda *_: features)
+
+    with pytest.raises(ArtifactContractError, match="partial or mismatched"):
+        validate_feature_artifact("eyesclosed", "baseline", ["alpha"])

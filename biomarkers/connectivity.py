@@ -1,5 +1,7 @@
-from mne_connectivity import spectral_connectivity_epochs
+import warnings
+
 import numpy as np
+from mne_connectivity import spectral_connectivity_epochs
 
 
 def _band_wpli(epochs, fmin, fmax):
@@ -9,17 +11,23 @@ def _band_wpli(epochs, fmin, fmax):
     # Request each undirected edge exactly once. Averaging a dense matrix would
     # otherwise include the undefined diagonal and count symmetric edges twice.
     sources, targets = np.triu_indices(n_channels, k=1)
-    con = spectral_connectivity_epochs(
-        data=epochs,
-        method="wpli",
-        indices=(sources, targets),
-        mode="multitaper",
-        sfreq=epochs.info["sfreq"],
-        fmin=fmin,
-        fmax=fmax,
-        faverage=True,
-        verbose=False,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="There were no Annotations stored.*",
+            category=RuntimeWarning,
+        )
+        con = spectral_connectivity_epochs(
+            data=epochs,
+            method="wpli",
+            indices=(sources, targets),
+            mode="multitaper",
+            sfreq=epochs.info["sfreq"],
+            fmin=fmin,
+            fmax=fmax,
+            faverage=True,
+            verbose=False,
+        )
     values = np.asarray(con.get_data()).reshape(len(sources), -1)
     finite = values[np.isfinite(values)]
     return float(finite.mean()) if finite.size else 0.0

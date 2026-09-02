@@ -47,6 +47,15 @@ def test_preprocessing_publishes_a_validated_stage_contract():
     assert "validate_preprocessed_artifacts" in code
 
 
+def test_feature_extraction_is_bounded_and_resumable():
+    code = _code("03_feature_extraction.ipynb")
+    assert "FEATURE_SUBJECT_LIMIT = 24" in code
+    assert "limit=FEATURE_SUBJECT_LIMIT" in code
+    assert 'result.get("status") in {"ok", "skipped"}' in code
+    assert "PARTIAL:" in code
+    assert "COMPLETE" in code
+
+
 def test_epoching_accepts_current_preprocessing_artifact_tree(tmp_path):
     root = tmp_path / "pipeline_output" / "data"
     epoch = root / "preprocessed" / "eyesclosed" / "baseline" / "sub-001_epo.fif"

@@ -90,6 +90,11 @@ def features_parquet_path(dataset: str, experiment: str) -> Path:
     return features_dir(dataset, experiment) / "subject_features.parquet"
 
 
+def feature_partitions_dir(dataset: str, experiment: str) -> Path:
+    """Durable per-subject feature checkpoints used to resume long runs."""
+    return features_dir(dataset, experiment) / "subject_partitions"
+
+
 def legacy_parquet_path(dataset_id: int) -> Path:
     return PROJECT_ROOT / "parquet_files" / f"features_dataset{dataset_id}.parquet"
 

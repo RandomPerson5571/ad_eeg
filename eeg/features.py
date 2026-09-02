@@ -14,7 +14,7 @@ def connectivity_for_epochs(epochs, ch_names):
     sfreq = base["features"]["sampling_rate"]
     data = epochs.get_data()
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=["eeg"] * len(ch_names))
-    epochs_mne = mne.EpochsArray(data, info=info)
+    epochs_mne = mne.EpochsArray(data, info=info, verbose=False)
     return compute_connectivity(epochs_mne)
 
 
@@ -32,7 +32,9 @@ def extract_eeg_features(data, ch_names=None, verbose=False, subject_connectivit
             ch_names = [f"EEG{i}" for i in range(epoch.shape[0])]
         ch_types = ["eeg"] * len(ch_names)
         epochs_info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
-        epoch_mne = mne.EpochsArray(epoch[np.newaxis, :, :], info=epochs_info)
+        epoch_mne = mne.EpochsArray(
+            epoch[np.newaxis, :, :], info=epochs_info, verbose=False
+        )
 
         complexity_features = {}
         for region_name, region_channels in regional.items():

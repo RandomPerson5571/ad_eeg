@@ -68,7 +68,7 @@ def save_epochs(epochs: mne.Epochs, path: Path) -> None:
 
 
 def load_epochs(path: Path) -> mne.Epochs:
-    return mne.read_epochs(str(path), preload=True)
+    return mne.read_epochs(str(path), preload=True, verbose=False)
 
 
 def save_checkpoint(obj: mne.io.BaseRaw | mne.Epochs, path: Path) -> None:
@@ -120,8 +120,22 @@ def _json_default(obj: Any) -> Any:
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, default=_json_default)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{path.stem}.",
+            suffix=path.suffix,
+            dir=path.parent,
+            delete=False,
+        ) as f:
+            tmp_path = Path(f.name)
+            json.dump(data, f, indent=2, default=_json_default)
+        tmp_path.replace(path)
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict[str, Any]:

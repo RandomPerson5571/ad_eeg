@@ -169,6 +169,21 @@ def validate_feature_artifact(
         raise ArtifactContractError(
             f"{path} contains missing participant IDs or labels."
         )
+    epoch_root = preprocessed_dir(dataset, experiment)
+    expected_subjects = {
+        epoch.name[: -len("_epo.fif")]
+        for epoch in epoch_root.glob("sub-*_epo.fif")
+    }
+    actual_subjects = set(frame["participant_id"].astype(str))
+    if expected_subjects and actual_subjects != expected_subjects:
+        missing_subjects = sorted(expected_subjects - actual_subjects)
+        unexpected_subjects = sorted(actual_subjects - expected_subjects)
+        raise ArtifactContractError(
+            f"{path} is a partial or mismatched feature artifact: "
+            f"{len(actual_subjects)}/{len(expected_subjects)} expected subjects. "
+            f"Missing: {missing_subjects[:5]}; unexpected: {unexpected_subjects[:5]}. "
+            "Resume notebook 03 with its latest saved output before running notebook 04."
+        )
     return {
         "path": path,
         "rows": len(frame),

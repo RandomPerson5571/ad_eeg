@@ -50,7 +50,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-IS_KAGGLE = Path("/kaggle/input").exists()
+KAGGLE_INPUT_DIR = Path("/kaggle/input")
+IS_KAGGLE = KAGGLE_INPUT_DIR.exists()
 if not IS_KAGGLE:
     raise RuntimeError(
         "This notebook runs on Kaggle only. "
@@ -137,13 +138,37 @@ def _input_mount_candidates(locator: str) -> list[Path]:
     """Accept a Kaggle slug, mounted path, or copied datasets/<owner>/<slug> path."""
     value = str(locator).strip().rstrip("/")
     supplied = Path(value)
-    candidates = [supplied] if supplied.is_absolute() else [Path("/kaggle/input") / supplied]
+    candidates = [supplied] if supplied.is_absolute() else [KAGGLE_INPUT_DIR / supplied]
     # Kaggle web paths are often copied as datasets/<owner>/<slug>, but the
     # notebook mount uses only /kaggle/input/<slug>.
     slug = supplied.name
-    mounted = Path("/kaggle/input") / slug
+    mounted = KAGGLE_INPUT_DIR / slug
     if mounted not in candidates:
         candidates.append(mounted)
+
+    # Also support owner/slug-style and renamed mounts. Kaggle's Input panel is
+    # the source of truth, so only add paths that actually exist there.
+    if KAGGLE_INPUT_DIR.is_dir():
+        for pattern in (f"*/{slug}", f"*/*/{slug}"):
+            for match in KAGGLE_INPUT_DIR.glob(pattern):
+                if match.is_dir() and match not in candidates:
+                    candidates.append(match)
+
+        normalized_slug = slug.lower().replace("_", "-")
+        available_mounts = [
+            path for path in KAGGLE_INPUT_DIR.iterdir() if path.is_dir()
+        ]
+        fuzzy_mounts = [
+            path
+            for path in available_mounts
+            if normalized_slug in path.name.lower().replace("_", "-")
+            or path.name.lower().replace("_", "-") in normalized_slug
+        ]
+        if not fuzzy_mounts and len(available_mounts) == 1:
+            fuzzy_mounts = available_mounts
+        for match in fuzzy_mounts:
+            if match not in candidates:
+                candidates.append(match)
     return candidates
 
 
@@ -189,11 +214,24 @@ def _pipeline_data_source(locator: str) -> tuple[Path, str]:
                 str(child.relative_to(base))
                 for child in sorted(base.iterdir())[:20]
             )
+    available_mounts = (
+        sorted(path.name for path in KAGGLE_INPUT_DIR.iterdir() if path.is_dir())
+        if KAGGLE_INPUT_DIR.is_dir()
+        else []
+    )
+    if not any(path.is_dir() for path in mounts):
+        raise FileNotFoundError(
+            f"No Kaggle input mount matches PIPELINE_INPUT={locator!r}. "
+            f"Available mounts: {available_mounts or ['<none>']}. Open the notebook's "
+            "Input pane, choose Add Input, attach the preprocessing dataset, then "
+            "restart the session."
+        )
     raise FileNotFoundError(
         f"Pipeline input '{locator}' has no recognized preprocessing or pipeline tree. "
         f"Checked: {[str(path) for path in checked]}. Attach the previous notebook's "
         "saved output dataset and use its mounted slug in PIPELINE_INPUT. "
-        f"Mounted top-level contents: {mounted_contents or ['<mount not found>']}"
+        f"Available mounts: {available_mounts or ['<none>']}. "
+        f"Mounted top-level contents: {mounted_contents or ['<empty>']}"
     )
 
 
@@ -739,26 +777,55 @@ print("Output contract:", output_contract)
         "03",
         "",
         [
-            ("markdown", "# 03 — Feature Extraction\n\nOne section per `biomarkers/` module."),
+            (
+                "markdown",
+                "# 03 — Feature Extraction\n\n"
+                "Feature extraction is checkpointed once per subject. The default "
+                "bounded batch stays comfortably below Kaggle's 12-hour limit. "
+                "After each partial run, save the output as a Dataset, attach that "
+                "latest output on the next run, and update `PIPELINE_INPUT`. Notebook "
+                "04 must only be started after this notebook reports `COMPLETE`."
+            ),
             ("code", CONFIG_CELL),
             ("code", '''\
 from eeg.contracts import validate_preprocessed_artifacts
-print(
-    "Input contract:",
-    validate_preprocessed_artifacts(CONFIG["dataset"], CONFIG["experiment"]),
+input_contract = validate_preprocessed_artifacts(
+    CONFIG["dataset"], CONFIG["experiment"]
 )
+print("Input contract:", input_contract)
+
+# At the observed throughput of ~10.7 wall-clock minutes per completed subject
+# with two workers, 24 subjects take roughly 4.3 hours. Set to None only outside
+# a runtime-limited environment.
+FEATURE_SUBJECT_LIMIT = 24
 
 from scripts.extract_features import run_extract
-run_extract(CONFIG["dataset"], CONFIG["experiment"], workers=2)
+results = run_extract(
+    CONFIG["dataset"],
+    CONFIG["experiment"],
+    workers=2,
+    limit=FEATURE_SUBJECT_LIMIT,
+)
+checkpointed = sum(
+    result.get("status") in {"ok", "skipped"} for result in results
+)
+expected = input_contract["epoch_checkpoints"]
 
 from eeg.contracts import validate_feature_artifact
 from eeg.training.datasets import feature_columns
-print(
-    "Output contract:",
-    validate_feature_artifact(
-        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
-    ),
-)
+if checkpointed < expected:
+    print(
+        f"PARTIAL: {checkpointed}/{expected} subjects checkpointed. "
+        "Save this output as a Kaggle Dataset, attach that new dataset, set "
+        "PIPELINE_INPUT to its slug, and run notebook 03 again."
+    )
+else:
+    print(
+        "COMPLETE — output contract:",
+        validate_feature_artifact(
+            CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+        ),
+    )
 '''),
             ("code", '''\
 from biomarkers import (

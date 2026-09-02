@@ -59,6 +59,14 @@ tree and the earlier direct preprocessing tree
 `pipeline_output/{dataset}/{experiment}/*_epo.fif`. Legacy trees are mapped into
 the downstream notebook's working view without modifying the attached dataset.
 
+Notebook 03 is intentionally resumable and runs at most 24 not-yet-completed
+subjects per version by default (about 4–5 hours at the observed Kaggle rate).
+Each subject is committed under
+`data/features/{dataset}/{experiment}/subject_partitions/` before the next subject
+starts. After a `PARTIAL` result, save the output as a Dataset and use that newest
+dataset as `PIPELINE_INPUT` for another notebook 03 run. Continue until it prints
+`COMPLETE`; notebook 04 rejects a partial subject cohort.
+
 ## Chaining example
 
 ```text
