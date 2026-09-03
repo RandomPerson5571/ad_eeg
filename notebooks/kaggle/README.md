@@ -12,7 +12,7 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, and 
 | `03_feature_extraction` | Biomarker features | Pipeline output from 01/02 |
 | `04_feature_selection` | Variance + correlation + MI | Pipeline output from 03 |
 | `05_classical_ml` | `run_benchmark()` | Pipeline output from 03/04 |
-| `06_deep_learning` | **Stub** — no DL code | Pipeline output from 02 |
+| `06_deep_learning` | EEGNet + subject-level CV | Pipeline output from 02 |
 | `07_ablation` | Experiment variants | Pipeline output from 03+ |
 | `08_final_benchmark` | Aggregate figures | Pipeline output from 05/07 |
 
@@ -20,7 +20,7 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, and 
 
 1. **Create notebook** on kaggle.com → upload or paste from `notebooks/kaggle/`.
 2. **Settings → Internet → On** (clone repo + pip install).
-3. **Settings → Accelerator → None** (CPU; GPU not needed for Phase 1).
+3. **Settings → Accelerator → None** for notebooks 00–05 and 07–08; use a GPU for notebook 06.
 4. **Add Data** → attach datasets (see config cell in each notebook).
 5. Edit the config cell:
    - notebooks 00–01: set `RAW_EEG_INPUT` to the dataset with

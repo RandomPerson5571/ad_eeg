@@ -81,6 +81,20 @@ Training produces OOF ROC, precision-recall, calibration, and confusion-matrix f
 |--------|-------|-------|
 | `scripts/train_model.py` | XGBoost | Nested grouped grid search |
 | `scripts/train_model.py` | MLP (128, 64) + StandardScaler | Nested grouped grid search |
+| `notebooks/kaggle/06_deep_learning.ipynb` | EEGNet-style CNN | Raw epoch arrays, subject-level CV and early stopping |
+
+## Deep-learning evaluation
+
+Notebook 06 consumes the float32 epoch arrays exported by notebook 02. Its compact
+EEGNet-style convolutional network is evaluated with stratified subject-level outer
+folds. A separate subject-level subset of each training fold controls early stopping;
+outer test subjects are never used for normalization, sampling, or model selection.
+Per-channel normalization statistics are learned from training subjects only.
+
+Training samples are weighted so each diagnostic class has equal total mass and each
+subject within a class contributes equal mass regardless of epoch count. Epoch
+probabilities are averaged per subject before calculating balanced accuracy, macro F1,
+MCC, ROC AUC, PR AUC, confusion matrices, and bootstrap confidence intervals.
 
 Legacy trainers in `classifier_models/` remain as thin wrappers.
 

@@ -14,7 +14,7 @@ KAGGLE_INTRO = """\
 **Run on [kaggle.com](https://www.kaggle.com) only** — not on your laptop.
 
 1. **Settings → Internet → On** (needed for `git clone` + `pip install`)
-2. **Settings → Accelerator → None** (CPU is enough for Phase 1)
+2. **Settings → Accelerator → None**, except notebook 06 where a GPU is recommended
 3. **Add Data** → attach input dataset(s) listed in the config cell below
 4. Run all cells, then publish the compact `pipeline_output/data/` artifact:
    create the notebook's output Dataset once; on later resumable runs, publish a
@@ -920,16 +920,18 @@ display(pd.read_csv(result["benchmark_csv"]))
         "06",
         "",
         [
-            ("markdown", """# 06 — Deep Learning (stub)
+            ("markdown", """# 06 — Deep Learning
 
-**Phase 1: no DL training code.**
+Train a compact EEGNet-style classifier with leakage-safe subject-level evaluation.
 
 ## Input contract
 - `data/preprocessed/{dataset}/{experiment}/epochs/sub-XXX.npy`
 - Shape: `(n_epochs, n_channels, n_samples)` float32
 
-## Planned models (backlog)
-- EEGNet, ChronoNet, DeepConvNet, ShallowConvNet, Transformer
+Use the output Dataset from notebook 02 and enable a Kaggle GPU accelerator. All
+epochs belonging to a participant remain together in the outer train/test folds and
+the inner early-stopping split. Metrics are calculated after averaging epoch
+probabilities for each participant.
 """),
             ("code", CONFIG_CELL),
             ("code", '''\
@@ -939,8 +941,33 @@ epoch_dir = epochs_npy_dir(CONFIG["dataset"], CONFIG["experiment"])
 print("Epoch npy dir:", epoch_dir)
 print("Input contract:", validate_epoch_exports(sorted(epoch_dir.glob("sub-*.npy"))))
 '''),
+            ("code", '''\
+from eeg.training.deep_learning import run_deep_learning_benchmark
+import pandas as pd
+
+DL_CONFIG = {
+    "cv_folds": CONFIG["cv_folds"],
+    "validation_size": 0.2,
+    "max_epochs": 30,
+    "patience": 6,
+    "batch_size": 64,
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "dropout": 0.5,
+    "bootstrap_iterations": 1000,
+    "seed": CONFIG["seed"],
+}
+
+result = run_deep_learning_benchmark(
+    CONFIG["dataset"],
+    CONFIG["experiment"],
+    **DL_CONFIG,
+)
+display(pd.read_csv(result["benchmark_csv"]))
+print("Model:", result["model_path"])
+print("Predictions:", result["predictions_csv"])
+'''),
         ],
-        save=False,
     ),
     "07_ablation.ipynb": _nb_cells(
         "07",

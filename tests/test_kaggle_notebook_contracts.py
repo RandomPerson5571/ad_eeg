@@ -40,6 +40,14 @@ def test_epoching_consumes_pipeline_output_not_raw_eeg():
     assert "validate_epoch_exports(paths)" in code
 
 
+def test_deep_learning_consumes_epoch_output_and_trains_eegnet():
+    code = _code("06_deep_learning.ipynb")
+    assert "RAW_EEG_INPUT = None" in code
+    assert "REQUIRES_PIPELINE_INPUT = True" in code
+    assert "validate_epoch_exports" in code
+    assert "run_deep_learning_benchmark" in code
+
+
 def test_preprocessing_publishes_a_validated_stage_contract():
     code = _code("01_preprocessing.ipynb")
     assert 'RAW_EEG_INPUT = "REPLACE_WITH_RAW_EEG_DATASET_SLUG"' in code
