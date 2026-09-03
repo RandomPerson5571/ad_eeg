@@ -45,9 +45,10 @@ def test_deep_learning_consumes_epoch_output_and_trains_eegnet():
     assert "RAW_EEG_INPUT = None" in code
     assert "REQUIRES_PIPELINE_INPUT = True" in code
     assert "validate_epoch_exports" in code
-    assert "run_deep_learning_benchmark" in code
+    assert "-m eeg.training.deep_learning" in code
     assert 'TORCH_BUILD = "2.5.1+cu121"' in code
-    assert '"sm_60" not in torch.cuda.get_arch_list()' in code
+    assert "venv --system-site-packages" in code
+    assert "--force-reinstall" not in code
 
 
 def test_preprocessing_publishes_a_validated_stage_contract():

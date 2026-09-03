@@ -6,6 +6,7 @@ not imported by ``eeg.training`` so classical-ML users do not need PyTorch.
 
 from __future__ import annotations
 
+import argparse
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -446,6 +447,13 @@ def run_deep_learning_benchmark(
     # Probe the actual training kernels now. ``torch.cuda.is_available()`` alone
     # can be true when the installed wheel has no kernel image for Kaggle's GPU.
     torch_device = _resolve_training_device(torch, device)
+    print(
+        f"PyTorch {torch.__version__}; device={torch_device}; "
+        f"CUDA runtime={torch.version.cuda}; "
+        f"GPU={torch.cuda.get_device_name(torch_device) if torch_device.type == 'cuda' else None}; "
+        f"compiled_architectures={torch.cuda.get_arch_list() if torch_device.type == 'cuda' else None}",
+        flush=True,
+    )
     fold_predictions = []
     fold_details = []
     start = time.perf_counter()
@@ -629,3 +637,44 @@ def run_deep_learning_benchmark(
         "model_path": str(model_path),
         "row": benchmark_row,
     }
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Train EEGNet on exported EEG epochs.")
+    parser.add_argument("--dataset", default="eyesclosed")
+    parser.add_argument("--experiment", default="baseline")
+    parser.add_argument("--cv-folds", type=int, default=5)
+    parser.add_argument("--validation-size", type=float, default=0.2)
+    parser.add_argument("--max-epochs", type=int, default=30)
+    parser.add_argument("--patience", type=int, default=6)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--dropout", type=float, default=0.5)
+    parser.add_argument("--bootstrap-iterations", type=int, default=1000)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default=None)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> dict[str, Any]:
+    args = _parse_args(argv)
+    return run_deep_learning_benchmark(
+        args.dataset,
+        args.experiment,
+        cv_folds=args.cv_folds,
+        validation_size=args.validation_size,
+        max_epochs=args.max_epochs,
+        patience=args.patience,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        dropout=args.dropout,
+        bootstrap_iterations=args.bootstrap_iterations,
+        seed=args.seed,
+        device=args.device,
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised on Kaggle
+    main()

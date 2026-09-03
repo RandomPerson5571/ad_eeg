@@ -934,42 +934,26 @@ the inner early-stopping split. Metrics are calculated after averaging epoch
 probabilities for each participant.
 
 Kaggle's P100 is a Pascal (`sm_60`) GPU. This notebook installs PyTorch 2.5.1 with
-CUDA 12.1 before importing PyTorch because newer CUDA 12.8/12.9 wheels omit Pascal
-kernels.
+CUDA 12.1 in an isolated virtual environment because newer CUDA 12.8/12.9 wheels
+omit Pascal kernels. Training runs in a fresh subprocess from that environment, so
+Kaggle's preloaded PyTorch and Python packages are not replaced.
 """),
             ("code", '''\
-# Install a Python 3.12-compatible PyTorch wheel that includes P100/sm_60 kernels.
-# PyTorch must not be imported before this cell runs.
-from importlib.metadata import PackageNotFoundError, version
+# Build an isolated Python environment with a P100/sm_60-compatible PyTorch.
+# --system-site-packages reuses the already-installed project dependencies while
+# keeping this torch/CUDA stack separate from Kaggle's preloaded torch modules.
 import sys
+from pathlib import Path
 
 TORCH_BUILD = "2.5.1+cu121"
-try:
-    installed_torch = version("torch")
-except PackageNotFoundError:
-    installed_torch = None
-
-if installed_torch != TORCH_BUILD:
-    run(
-        f"{sys.executable} -m pip install -q --no-cache-dir --no-deps "
-        "--force-reinstall torch==2.5.1 "
-        "--index-url https://download.pytorch.org/whl/cu121"
-    )
-
-import torch
-print(
-    "PyTorch:", torch.__version__,
-    "CUDA runtime:", torch.version.cuda,
-    "GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-    "capability:", torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None,
-    "compiled architectures:", torch.cuda.get_arch_list() if torch.cuda.is_available() else None,
+DL_ENV = Path("/kaggle/temp/ad_eeg_dl_venv")
+DL_PYTHON = DL_ENV / "bin" / "python"
+if not DL_PYTHON.exists():
+    run(f"{sys.executable} -m venv --system-site-packages {DL_ENV}")
+run(
+    f"{DL_PYTHON} -m pip install -q --no-cache-dir "
+    "torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121"
 )
-if torch.cuda.is_available() and torch.cuda.get_device_capability(0) == (6, 0):
-    if "sm_60" not in torch.cuda.get_arch_list():
-        raise RuntimeError(
-            "The installed PyTorch wheel does not include sm_60 kernels required "
-            "by the P100. Restart the Kaggle session and run all cells from the top."
-        )
 '''),
             ("code", CONFIG_CELL),
             ("code", '''\
@@ -980,8 +964,8 @@ print("Epoch npy dir:", epoch_dir)
 print("Input contract:", validate_epoch_exports(sorted(epoch_dir.glob("sub-*.npy"))))
 '''),
             ("code", '''\
-from eeg.training.deep_learning import run_deep_learning_benchmark
 import pandas as pd
+from eeg.paths import models_dir, results_dir
 
 DL_CONFIG = {
     "cv_folds": CONFIG["cv_folds"],
@@ -994,18 +978,29 @@ DL_CONFIG = {
     "dropout": 0.5,
     "bootstrap_iterations": 1000,
     "seed": CONFIG["seed"],
-    # None automatically uses the P100 after the compatibility check above.
-    "device": None,
+    "device": "cuda",
 }
 
-result = run_deep_learning_benchmark(
-    CONFIG["dataset"],
-    CONFIG["experiment"],
-    **DL_CONFIG,
+device_arg = f"--device {DL_CONFIG['device']}" if DL_CONFIG["device"] else ""
+run(
+    f"{DL_PYTHON} -m eeg.training.deep_learning "
+    f"--dataset {CONFIG['dataset']} --experiment {CONFIG['experiment']} "
+    f"--cv-folds {DL_CONFIG['cv_folds']} "
+    f"--validation-size {DL_CONFIG['validation_size']} "
+    f"--max-epochs {DL_CONFIG['max_epochs']} --patience {DL_CONFIG['patience']} "
+    f"--batch-size {DL_CONFIG['batch_size']} "
+    f"--learning-rate {DL_CONFIG['learning_rate']} "
+    f"--weight-decay {DL_CONFIG['weight_decay']} --dropout {DL_CONFIG['dropout']} "
+    f"--bootstrap-iterations {DL_CONFIG['bootstrap_iterations']} "
+    f"--seed {DL_CONFIG['seed']} {device_arg}"
 )
-display(pd.read_csv(result["benchmark_csv"]))
-print("Model:", result["model_path"])
-print("Predictions:", result["predictions_csv"])
+result_root = results_dir(CONFIG["dataset"], CONFIG["experiment"])
+benchmark_path = result_root / "deep_learning_benchmark.csv"
+predictions_path = result_root / "deep_learning_predictions.csv"
+model_path = models_dir(CONFIG["dataset"], CONFIG["experiment"]) / "eegnet.pt"
+display(pd.read_csv(benchmark_path))
+print("Model:", model_path)
+print("Predictions:", predictions_path)
 '''),
         ],
     ),
