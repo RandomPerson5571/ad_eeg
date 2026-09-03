@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from sklearn.metrics import average_precision_score
 
-from eeg.training.benchmark import MODEL_REGISTRY, run_benchmark
+from eeg.training.benchmark import MODEL_REGISTRY, _selection_settings, run_benchmark
 from eeg.training.evaluation import bootstrap_ci, compute_benchmark_metrics
 
 
@@ -14,6 +14,16 @@ def test_model_registry_keys():
     assert "random_forest" in MODEL_REGISTRY
     assert "xgboost" in MODEL_REGISTRY
     assert "mlp" in MODEL_REGISTRY
+
+
+def test_selection_settings_accepts_notebook_experiment_name():
+    settings = _selection_settings(
+        {"experiment": "baseline", "feature_selection": {"top_k": 8}},
+        seed=42,
+    )
+
+    assert settings["top_k"] == 8
+    assert settings["random_state"] == 42
 
 
 def test_compute_benchmark_metrics_multiclass():

@@ -2,7 +2,7 @@
 
 **These notebooks run on [Kaggle](https://www.kaggle.com) cloud CPUs — not on your laptop.**
 
-Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run, then **Save Version → Create Dataset** to chain stages. Production artifacts are written directly to `/kaggle/working/pipeline_output/data`; there is no publish-time copy.
+Upload each notebook to Kaggle, enable **Internet**, attach input datasets, and run it. Create that notebook's output Dataset once; for later resumable runs, publish a new version of the same Dataset. Production artifacts are written directly to `/kaggle/working/pipeline_output/data`; there is no publish-time copy.
 
 | Notebook | Stage | Kaggle inputs |
 |----------|-------|---------------|
@@ -30,7 +30,9 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, run,
    - use the mounted dataset slug (for example `preprocessed-eeg-data`), not a
      Kaggle web path such as `datasets/owner/preprocessed-eeg-data`
 6. Run all cells.
-7. **Save Version** with output → **Create Dataset** for the next notebook.
+7. **Save Version** with output. Create the output Dataset on the first run, or
+   publish a new version of that same Dataset on later resumable runs. Attach its
+   latest version before continuing.
 
 ## How code gets onto Kaggle
 
@@ -63,9 +65,11 @@ Notebook 03 is intentionally resumable and runs at most 24 not-yet-completed
 subjects per version by default (about 4–5 hours at the observed Kaggle rate).
 Each subject is committed under
 `data/features/{dataset}/{experiment}/subject_partitions/` before the next subject
-starts. After a `PARTIAL` result, save the output as a Dataset and use that newest
-dataset as `PIPELINE_INPUT` for another notebook 03 run. Continue until it prints
-`COMPLETE`; notebook 04 rejects a partial subject cohort.
+starts. After the first `PARTIAL` result, create one output Dataset for notebook 03.
+After every later `PARTIAL` result, publish a new version of that same Dataset—Kaggle
+does not require or allow this notebook to create a second output Dataset. Attach the
+latest version as `PIPELINE_INPUT` for another notebook 03 run. Continue until it
+prints `COMPLETE`; notebook 04 rejects a partial subject cohort.
 
 ## Chaining example
 

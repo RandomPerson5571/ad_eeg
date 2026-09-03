@@ -108,11 +108,15 @@ def _candidate_features(df: pd.DataFrame, config: dict, requested: list[str] | N
 
 def _selection_settings(config: dict, seed: int) -> dict[str, Any]:
     training = config.get("training", {})
+    # Notebook configs identify the experiment by name (for example,
+    # ``{"experiment": "baseline"}``), while some callers may provide a
+    # nested experiment config. Only the latter can contain selection options.
     experiment = config.get("experiment", {})
+    experiment_settings = experiment if isinstance(experiment, dict) else {}
     selection = (
         config.get("feature_selection")
         or training.get("feature_selection")
-        or experiment.get("feature_selection")
+        or experiment_settings.get("feature_selection")
         or {}
     )
     return {

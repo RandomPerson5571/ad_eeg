@@ -81,7 +81,7 @@ def _adopt_legacy_partitions(
     participants: pd.DataFrame,
     config_fp: str,
 ) -> int:
-    """Recover completed partitions left by the pre-checkpoint implementation."""
+    """Recover completed partitions left by pre-checkpoint implementations."""
     participant_ids = set(participants["participant_id"].astype(str))
     adopted = 0
     feature_root = features_parquet_path(dataset_name, experiment).parent
@@ -121,6 +121,58 @@ def _adopt_legacy_partitions(
                 "recovered_from_legacy_partition": True,
             },
         )
+        adopted += 1
+
+    # A completed bounded run from the original implementation deleted its
+    # temporary partition directory after merging it. Its saved Kaggle artifact
+    # therefore has only subject_features.parquet plus one success log per
+    # subject. Recreate durable partitions from that aggregate, but only when
+    # the old log still certifies the same config, epoch input, and row count.
+    aggregate_path = features_parquet_path(dataset_name, experiment)
+    if not aggregate_path.is_file():
+        return adopted
+    try:
+        aggregate = pd.read_parquet(aggregate_path)
+    except Exception:
+        return adopted
+    if aggregate.empty or "participant_id" not in aggregate.columns:
+        return adopted
+
+    aggregate_ids = aggregate["participant_id"].astype(str)
+    for participant_id in sorted(participant_ids & set(aggregate_ids)):
+        destination = _partition_path(dataset_name, experiment, participant_id)
+        if destination.exists():
+            continue
+        epochs_path = resolve_checkpoint_path(
+            dataset_name, experiment, participant_id, "epochs"
+        )
+        log_path = subject_log_path(
+            dataset_name, experiment, participant_id, stage="features"
+        )
+        if not epochs_path.is_file() or not log_path.is_file():
+            continue
+        try:
+            log = read_json(log_path)
+            rows = aggregate.loc[aggregate_ids == participant_id].copy()
+            epochs_hash = sha256_file(epochs_path)
+        except (OSError, ValueError):
+            continue
+        if (
+            rows.empty
+            or log.get("status") != "ok"
+            or log.get("config_fingerprint") != config_fp
+            or log.get("epochs_sha256") != epochs_hash
+            or log.get("n_epochs") != len(rows)
+        ):
+            continue
+        _write_partition(rows, destination)
+        log.update(
+            {
+                "partition": destination.name,
+                "recovered_from_legacy_aggregate": True,
+            }
+        )
+        write_json(log_path, log)
         adopted += 1
     return adopted
 

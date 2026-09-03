@@ -16,8 +16,9 @@ KAGGLE_INTRO = """\
 1. **Settings → Internet → On** (needed for `git clone` + `pip install`)
 2. **Settings → Accelerator → None** (CPU is enough for Phase 1)
 3. **Add Data** → attach input dataset(s) listed in the config cell below
-4. Run all cells, then **Save Version** → **Save as Dataset** to pass the compact
-   `pipeline_output/data/` artifact to the next notebook
+4. Run all cells, then publish the compact `pipeline_output/data/` artifact:
+   create the notebook's output Dataset once; on later resumable runs, publish a
+   new version of that same Dataset instead of trying to create another Dataset
 
 The repository is cloned into temporary storage and is never copied into the saved
 notebook output. Pipeline stages write directly to the final output directory, avoiding
@@ -289,8 +290,9 @@ def summarize_output() -> None:
     _print_storage("Final artifact")
     print(f"Output ready: {OUTPUT_DIR} ({n_files} files)", flush=True)
     print(
-        "Save Version → Save output as a new Kaggle Dataset, then attach it "
-        "in the next notebook.",
+        "Save Version, then create the output Dataset if this is the first run "
+        "or publish a new version of the same Dataset on later runs. Attach the "
+        "latest Dataset version before the next run or notebook.",
         flush=True,
     )
 
@@ -782,8 +784,9 @@ print("Output contract:", output_contract)
                 "# 03 — Feature Extraction\n\n"
                 "Feature extraction is checkpointed once per subject. The default "
                 "bounded batch stays comfortably below Kaggle's 12-hour limit. "
-                "After each partial run, save the output as a Dataset, attach that "
-                "latest output on the next run, and update `PIPELINE_INPUT`. Notebook "
+                "Create one output Dataset for this notebook. After each partial run, "
+                "publish a new version of that same Dataset, attach its latest version "
+                "on the next run, and keep `PIPELINE_INPUT` set to its slug. Notebook "
                 "04 must only be started after this notebook reports `COMPLETE`."
             ),
             ("code", CONFIG_CELL),
@@ -816,8 +819,9 @@ from eeg.training.datasets import feature_columns
 if checkpointed < expected:
     print(
         f"PARTIAL: {checkpointed}/{expected} subjects checkpointed. "
-        "Save this output as a Kaggle Dataset, attach that new dataset, set "
-        "PIPELINE_INPUT to its slug, and run notebook 03 again."
+        "Publish this output as a new version of this notebook's existing Kaggle "
+        "Dataset (create it only if this is the first batch), attach the latest "
+        "version, keep PIPELINE_INPUT set to its slug, and run notebook 03 again."
     )
 else:
     print(
