@@ -12,7 +12,7 @@ Upload each notebook to Kaggle, enable **Internet**, attach input datasets, and 
 | `03_feature_extraction` | Biomarker features | Pipeline output from 01/02 |
 | `04_feature_selection` | Variance + correlation + MI | Pipeline output from 03 |
 | `05_classical_ml` | `run_benchmark()` | Pipeline output from 03/04 |
-| `06_deep_learning` | EEGNet + subject-level CV | Pipeline output from 02 |
+| `06_deep_learning` | EEGNet + subject-level CV (P100 compatible) | Pipeline output from 02 |
 | `07_ablation` | Experiment variants | Pipeline output from 03+ |
 | `08_final_benchmark` | Aggregate figures | Pipeline output from 05/07 |
 

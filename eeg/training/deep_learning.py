@@ -41,6 +41,50 @@ def _require_torch():
     return torch
 
 
+def _probe_cuda_device(torch, device) -> None:
+    """Run a tiny forward/backward pass to catch binary/GPU incompatibility."""
+    probe = torch.nn.Sequential(
+        torch.nn.Conv2d(1, 2, kernel_size=3, padding=1, bias=False),
+        torch.nn.BatchNorm2d(2),
+    ).to(device)
+    inputs = torch.zeros((2, 1, 4, 4), device=device, requires_grad=True)
+    probe(inputs).sum().backward()
+    torch.cuda.synchronize(device)
+    del inputs, probe
+    torch.cuda.empty_cache()
+
+
+def _resolve_training_device(torch, requested: str | None):
+    """Resolve and validate the device before expensive data preparation."""
+    if requested is not None and str(requested).lower() == "cpu":
+        return torch.device("cpu")
+    wants_cuda = requested is None or str(requested).lower().startswith("cuda")
+    if not wants_cuda:
+        return torch.device(requested)
+    if not torch.cuda.is_available():
+        if requested is not None:
+            raise RuntimeError("CUDA was requested but PyTorch reports it unavailable.")
+        return torch.device("cpu")
+
+    candidate = torch.device(requested or "cuda")
+    try:
+        _probe_cuda_device(torch, candidate)
+    except Exception as exc:
+        try:
+            gpu_name = torch.cuda.get_device_name(candidate)
+        except Exception:  # pragma: no cover - diagnostic fallback
+            gpu_name = "unknown GPU"
+        raise RuntimeError(
+            "PyTorch cannot execute training kernels on the selected Kaggle GPU "
+            f"({gpu_name}): {exc}. Stop this session and choose a compatible "
+            "PyTorch CUDA wheel, then restart the notebook. For a P100, rerun "
+            "notebook 06 from the first cell so it installs the pinned Pascal-compatible "
+            "wheel. To run without CUDA, pass device='cpu' to "
+            "run_deep_learning_benchmark, but five-fold training may be slow."
+        ) from exc
+    return candidate
+
+
 def _subject_table(dataset: str, experiment: str, paths: Iterable[Path]) -> pd.DataFrame:
     """Resolve one label for every exported subject and ignore absent subjects."""
     paths = [Path(path) for path in paths]
@@ -399,10 +443,9 @@ def run_deep_learning_benchmark(
     if n_classes < 2:
         raise ValueError("Deep-learning classification requires at least two classes.")
 
-    resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    if resolved_device.startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is not available.")
-    torch_device = torch.device(resolved_device)
+    # Probe the actual training kernels now. ``torch.cuda.is_available()`` alone
+    # can be true when the installed wheel has no kernel image for Kaggle's GPU.
+    torch_device = _resolve_training_device(torch, device)
     fold_predictions = []
     fold_details = []
     start = time.perf_counter()

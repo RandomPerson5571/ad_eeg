@@ -932,7 +932,45 @@ Use the output Dataset from notebook 02 and enable a Kaggle GPU accelerator. All
 epochs belonging to a participant remain together in the outer train/test folds and
 the inner early-stopping split. Metrics are calculated after averaging epoch
 probabilities for each participant.
+
+Kaggle's P100 is a Pascal (`sm_60`) GPU. This notebook installs PyTorch 2.5.1 with
+CUDA 12.1 before importing PyTorch because newer CUDA 12.8/12.9 wheels omit Pascal
+kernels.
 """),
+            ("code", '''\
+# Install a Python 3.12-compatible PyTorch wheel that includes P100/sm_60 kernels.
+# PyTorch must not be imported before this cell runs.
+from importlib.metadata import PackageNotFoundError, version
+import sys
+
+TORCH_BUILD = "2.5.1+cu121"
+try:
+    installed_torch = version("torch")
+except PackageNotFoundError:
+    installed_torch = None
+
+if installed_torch != TORCH_BUILD:
+    run(
+        f"{sys.executable} -m pip install -q --no-cache-dir --no-deps "
+        "--force-reinstall torch==2.5.1 "
+        "--index-url https://download.pytorch.org/whl/cu121"
+    )
+
+import torch
+print(
+    "PyTorch:", torch.__version__,
+    "CUDA runtime:", torch.version.cuda,
+    "GPU:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    "capability:", torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None,
+    "compiled architectures:", torch.cuda.get_arch_list() if torch.cuda.is_available() else None,
+)
+if torch.cuda.is_available() and torch.cuda.get_device_capability(0) == (6, 0):
+    if "sm_60" not in torch.cuda.get_arch_list():
+        raise RuntimeError(
+            "The installed PyTorch wheel does not include sm_60 kernels required "
+            "by the P100. Restart the Kaggle session and run all cells from the top."
+        )
+'''),
             ("code", CONFIG_CELL),
             ("code", '''\
 from eeg.contracts import validate_epoch_exports
@@ -956,6 +994,8 @@ DL_CONFIG = {
     "dropout": 0.5,
     "bootstrap_iterations": 1000,
     "seed": CONFIG["seed"],
+    # None automatically uses the P100 after the compatibility check above.
+    "device": None,
 }
 
 result = run_deep_learning_benchmark(

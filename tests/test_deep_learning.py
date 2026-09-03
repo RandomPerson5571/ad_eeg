@@ -1,11 +1,15 @@
 """Tests for leakage-safe deep-learning data preparation."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from eeg.training.deep_learning import (
     EpochArrayDataset,
     _channel_statistics,
+    _resolve_training_device,
     _subject_folds,
     _train_validation_split,
 )
@@ -66,3 +70,26 @@ def test_normalization_and_sampling_weights_use_subjects_not_epoch_counts(tmp_pa
     for weight, (_, _, _, participant_id) in zip(weights, dataset.records):
         mass_by_subject[participant_id] = mass_by_subject.get(participant_id, 0.0) + weight
     assert len({round(value, 12) for value in mass_by_subject.values()}) == 1
+
+
+def test_explicit_cpu_skips_cuda_probe():
+    fake_torch = SimpleNamespace(device=lambda value: value)
+
+    assert _resolve_training_device(fake_torch, "cpu") == "cpu"
+
+
+def test_incompatible_cuda_fails_with_accelerator_guidance(monkeypatch):
+    fake_torch = SimpleNamespace(
+        device=lambda value: value,
+        cuda=SimpleNamespace(
+            is_available=lambda: True,
+            get_device_name=lambda _: "Tesla P100",
+        ),
+    )
+    monkeypatch.setattr(
+        "eeg.training.deep_learning._probe_cuda_device",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("no kernel image")),
+    )
+
+    with pytest.raises(RuntimeError, match="Pascal-compatible"):
+        _resolve_training_device(fake_torch, None)
