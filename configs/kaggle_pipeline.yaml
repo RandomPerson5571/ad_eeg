@@ -1,0 +1,74 @@
+# Resumable serial Kaggle notebook orchestration.
+#
+# Before running, set KAGGLE_USERNAME and replace raw_dataset with the private
+# or public Kaggle Dataset containing EEG_data/dataset2 and EEG_data/dataset3.
+# Keep the output Dataset slugs private unless the derived artifacts are ready
+# to publish.
+
+kaggle:
+  owner: "${KAGGLE_USERNAME}"
+  raw_dataset: "REPLACE_WITH_OWNER/raw-eeg-dataset"
+  repo_url: "https://github.com/RandomPerson5571/ad_eeg.git"
+  repo_branch: "main"
+  kernel_prefix: "ad-eeg"
+  output_dataset_prefix: "ad-eeg-pipeline"
+  # Set this to the license permitted for derived artifacts. "other" avoids
+  # asserting a license for the source clinical recordings by default.
+  dataset_license: "other"
+  state_path: ".kaggle_pipeline/state.json"
+  work_dir: ".kaggle_pipeline"
+  timeout_seconds: 43200
+  poll_interval_seconds: 60
+  max_partial_runs: 32
+
+# The runner executes stage-major: all matrix entries finish stage 01 before
+# stage 02 begins. Notebook 03 is repeated and versioned until COMPLETE.
+stages:
+  - 00_dataset_audit
+  - 01_preprocessing
+  - 02_epoching
+  - 03_feature_extraction
+  - 04_feature_selection
+  - 05_classical_ml
+  - 06_deep_learning
+  - 07_ablation
+  - 08_final_benchmark
+
+matrix:
+  datasets:
+    - eyesclosed
+    - photomark
+  # "fast" is a smoke-test configuration and is intentionally excluded from
+  # the production matrix. Add it here when you want it included.
+  experiments:
+    - baseline
+    - ica95
+    - no_asr
+    - no_ref
+    - no_overlap
+  feature_sets:
+    - full
+
+# Existing artifacts can be supplied here when starting in the middle of the
+# pipeline. Values are owner/dataset-slug handles. Normally the runner fills
+# these from its state file as earlier stages complete.
+inputs: {}
+
+stage_options:
+  "00":
+    workers: 2
+  "01":
+    mode: full
+    workers: 2
+    keep_intermediate_checkpoints: false
+  "03":
+    workers: 2
+    feature_subject_limit: 24
+  "06":
+    # T4 is the default compatible GPU for the generated notebook. Change to
+    # NvidiaTeslaP100 only if the notebook's Pascal-compatible torch setup is
+    # intentionally being used.
+    machine_shape: NvidiaTeslaT4
+
+# Set true after fixing a failed job, then rerun the scheduler.
+retry_failed: false

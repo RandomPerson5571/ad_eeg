@@ -49,6 +49,9 @@ python scripts/extract_features.py --dataset eyesclosed --experiment baseline
 
 ```bash
 python scripts/train_model.py --dataset eyesclosed --experiment baseline --model xgboost,mlp
+
+# Recommended follow-up analyses for the eyes-closed baseline
+python scripts/run_extended_analysis.py --dataset eyesclosed --experiment baseline --permutations 1000
 ```
 
 ### End-to-end
@@ -119,6 +122,7 @@ Reports are saved under `data/results/{dataset}/{experiment}/qc/`.
 - [Methodology](docs/METHODOLOGY.md) — preprocessing, features, evaluation
 - [Pipeline audit](docs/PIPELINE_AUDIT.md) — literature review of preprocessing and feature extraction
 - [Reproducibility](docs/REPRODUCIBILITY.md) — exact commands and seeds
+- [Automated Kaggle pipeline](docs/KAGGLE_AUTOMATION.md) — serial notebook execution, Dataset versioning, resume, and scheduling
 
 ## Inference example
 

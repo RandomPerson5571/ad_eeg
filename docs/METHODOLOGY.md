@@ -75,6 +75,38 @@ python scripts/train_model.py --dataset eyesclosed --experiment baseline --model
 
 Training produces OOF ROC, precision-recall, calibration, and confusion-matrix figures.
 
+## Follow-up analysis suite
+
+After the primary benchmark, run the complete follow-up analysis with:
+
+```bash
+python scripts/run_extended_analysis.py \
+  --dataset eyesclosed --experiment baseline --permutations 1000
+```
+
+The suite keeps the same outer subject folds and performs all model selection on
+inner grouped folds. It writes `analysis_summary.csv`, a human-readable
+`extended_analysis.md` report, per-run `fold_metrics.csv` files, and
+`permutation_scores.csv` under
+`data/results/{dataset}/{experiment}/analysis/`. It includes:
+
+- sigmoid probability calibration and binary/class-specific threshold tuning;
+- L1, L2, and elastic-net logistic regression regularization sweeps;
+- individual band-power, spectral, connectivity, complexity, posterior-region,
+  and global-feature ablations;
+- inner-fold univariate top-k, L1-based, and PCA selection comparisons; and
+- a subject-label permutation null distribution with a corrected empirical
+  p-value.
+
+The current 12-column feature table does not contain channel-specific features,
+so channel-level ablations are reported as unavailable rather than being
+silently approximated. To enable them, add channel-resolved columns and list
+their groups under `training.analysis.channel_groups` in the training config.
+
+The ordinary `scripts/benchmark.py` command retains the original argmax policy.
+Threshold tuning is valid only when enabled because its operating point must be
+selected inside the inner CV, never from outer test subjects.
+
 ## Models
 
 | Script | Model | Notes |

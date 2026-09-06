@@ -15,6 +15,24 @@ feature_columns:
   - theta_wpli
   - alpha_wpli
 
+# Named subsets used by the Kaggle matrix runner. Keep the legacy top-level
+# feature_columns list above for local callers and older artifacts.
+feature_sets:
+  full:
+    columns:
+      - lzc_posterior
+      - mse_posterior
+      - rel_alpha
+      - rel_beta
+      - rel_theta
+      - rel_delta
+      - alpha_peak_freq
+      - theta_alpha_ratio
+      - theta_beta_ratio
+      - slow_fast_ratio
+      - theta_wpli
+      - alpha_wpli
+
 regional_channels:
   posterior: [P3, Pz, P4, O1, O2]
 

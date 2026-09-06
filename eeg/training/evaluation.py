@@ -16,6 +16,7 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     balanced_accuracy_score,
+    log_loss,
     classification_report,
     cohen_kappa_score,
     confusion_matrix,
@@ -74,6 +75,27 @@ def compute_benchmark_metrics(
                 metrics["macro_pr_auc"] = float(
                     average_precision_score(y_bin, y_proba, average="macro")
                 )
+            y_bin = label_binarize(y_true, classes=labels)
+            if len(labels) == 2:
+                y_bin = np.column_stack([1 - y_bin, y_bin])
+            probabilities = np.asarray(y_proba, dtype=float)
+            metrics["brier_score"] = float(
+                np.mean(np.sum((y_bin - probabilities) ** 2, axis=1))
+            )
+            metrics["log_loss"] = float(log_loss(y_true, probabilities, labels=labels))
+            confidence = probabilities.max(axis=1)
+            correctness = (np.asarray(y_pred) == np.asarray(y_true)).astype(float)
+            bin_edges = np.linspace(0.0, 1.0, 11)
+            ece = 0.0
+            for lower, upper in zip(bin_edges[:-1], bin_edges[1:]):
+                in_bin = (confidence >= lower) & (
+                    (confidence < upper) if upper < 1.0 else (confidence <= upper)
+                )
+                if in_bin.any():
+                    ece += float(in_bin.mean()) * abs(
+                        float(correctness[in_bin].mean()) - float(confidence[in_bin].mean())
+                    )
+            metrics["expected_calibration_error"] = float(ece)
         except (ValueError, IndexError):
             metrics["macro_roc_auc"] = None
             metrics["macro_pr_auc"] = None
@@ -188,6 +210,16 @@ def plot_calibration(y_true, y_proba, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(6, 5))
     if y_proba.shape[1] == 2:
         CalibrationDisplay.from_predictions(y_true, y_proba[:, 1], n_bins=10, ax=ax)
+    else:
+        for class_idx in range(y_proba.shape[1]):
+            class_true = (np.asarray(y_true) == class_idx).astype(int)
+            CalibrationDisplay.from_predictions(
+                class_true,
+                y_proba[:, class_idx],
+                n_bins=8,
+                ax=ax,
+                name=f"class {class_idx}",
+            )
     ax.set_title("Calibration curve")
     _save_fig(fig, out_path)
 

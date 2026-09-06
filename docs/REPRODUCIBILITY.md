@@ -32,9 +32,18 @@ python scripts/extract_features.py --dataset eyesclosed --experiment baseline --
 # 5. Train + evaluate (ROC, confusion matrix inline)
 python scripts/train_model.py --dataset eyesclosed --experiment baseline --model xgboost,mlp
 
+# 6. Run all LR follow-up analyses and the label permutation test
+python scripts/run_extended_analysis.py --dataset eyesclosed --experiment baseline --permutations 1000
+
 # Or run all stages:
 python pipeline.py --dataset eyesclosed --experiment baseline --stages preprocess,features,train --workers 4
 ```
+
+The extended suite writes its aggregate CSV and Markdown report to
+`data/results/eyesclosed/baseline/analysis/analysis_summary.csv` and
+`data/results/eyesclosed/baseline/analysis/extended_analysis.md`. Use a smaller
+`--permutations` value for a smoke test; use at least 1000 for a stable empirical
+null p-value.
 
 ### Fast smoke test
 

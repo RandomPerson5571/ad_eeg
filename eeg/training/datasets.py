@@ -10,9 +10,33 @@ from eeg.io import load_features_df
 from eeg.paths import selected_features_path
 
 
-def feature_columns(config: dict | None = None) -> list[str]:
+def feature_columns(
+    config: dict | None = None, feature_set: str | None = None
+) -> list[str]:
+    """Return the configured columns for a named feature set.
+
+    ``load_base_configs()`` stores feature settings under ``features`` while
+    notebook run configs are intentionally flat. Supporting both shapes keeps
+    the existing local callers compatible and lets the Kaggle orchestrator
+    select a feature set without rewriting the feature parquet.
+    """
     cfg = config or load_base_configs()
-    return list(cfg["features"]["feature_columns"])
+    features_cfg = cfg.get("features", cfg)
+    selected_name = feature_set or cfg.get("feature_set")
+    feature_sets = features_cfg.get("feature_sets", {})
+    if selected_name and feature_sets:
+        if selected_name not in feature_sets:
+            available = ", ".join(sorted(feature_sets))
+            raise ValueError(
+                f"Unknown feature set {selected_name!r}; available: {available}"
+            )
+        selected = feature_sets[selected_name]
+        if isinstance(selected, dict):
+            selected = selected.get("columns", selected.get("feature_columns"))
+        if not selected:
+            raise ValueError(f"Feature set {selected_name!r} does not define columns")
+        return list(selected)
+    return list(features_cfg["feature_columns"])
 
 
 def validate_feature_schema(df: pd.DataFrame, config: dict | None = None) -> None:

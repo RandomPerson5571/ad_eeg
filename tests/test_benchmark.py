@@ -5,7 +5,13 @@ import pandas as pd
 import pytest
 from sklearn.metrics import average_precision_score
 
-from eeg.training.benchmark import MODEL_REGISTRY, _selection_settings, run_benchmark
+from eeg.training.benchmark import (
+    MODEL_REGISTRY,
+    _optimize_thresholds,
+    _predict_with_threshold,
+    _selection_settings,
+    run_benchmark,
+)
 from eeg.training.evaluation import bootstrap_ci, compute_benchmark_metrics
 
 
@@ -58,6 +64,19 @@ def test_bootstrap_ci():
 
     mean, lo, hi = bootstrap_ci(fn, y_true, y_pred, n=50, seed=0)
     assert lo <= mean <= hi
+
+
+def test_threshold_helpers_support_binary_and_multiclass():
+    binary = np.array([[0.8, 0.2], [0.4, 0.6]])
+    assert _predict_with_threshold(binary, [0.7]).tolist() == [0, 0]
+    assert _predict_with_threshold(binary, [0.5]).tolist() == [0, 1]
+
+    multiclass = np.array(
+        [[0.55, 0.40, 0.05], [0.20, 0.45, 0.35], [0.10, 0.20, 0.70]]
+    )
+    thresholds = _optimize_thresholds(np.array([0, 1, 2]), multiclass, 3)
+    assert len(thresholds) == 3
+    assert _predict_with_threshold(multiclass, thresholds).shape == (3,)
 
 
 def test_run_benchmark_smoke(tmp_path, monkeypatch):
@@ -125,6 +144,7 @@ def test_run_benchmark_smoke(tmp_path, monkeypatch):
     from pathlib import Path
 
     assert Path(result["benchmark_csv"]).exists()
+    assert Path(result["fold_metrics_csv"]).exists()
     meta_path = tmp_path / "results" / "eyesclosed" / "baseline" / "benchmark_metadata.json"
     assert meta_path.exists()
     predictions = pd.read_csv(
@@ -140,3 +160,80 @@ def test_run_benchmark_smoke(tmp_path, monkeypatch):
     assert len(details["fold_details"]) == 3
     assert all(fold["inner_cv_folds"] == 2 for fold in details["fold_details"])
     assert all(fold["selected_features"] for fold in details["fold_details"])
+
+
+def test_run_benchmark_threshold_calibration_and_lr_variants(tmp_path, monkeypatch):
+    """Calibration, threshold tuning, L1 selection, and PCA remain grouped."""
+    rng = np.random.default_rng(1)
+    rows = []
+    for sid in range(12):
+        label = ["A", "F", "C"][sid % 3]
+        for epoch in range(3):
+            rows.append(
+                {
+                    "participant_id": f"sub-{sid:03d}",
+                    "label": label,
+                    "dataset_id": 2,
+                    "dataset_name": "eyesclosed",
+                    "epoch_id": epoch,
+                    **{f"f{i}": rng.normal(loc=(sid % 3) * 0.2, scale=1.0) for i in range(6)},
+                }
+            )
+    df = pd.DataFrame(rows)
+    parquet = tmp_path / "subject_features.parquet"
+    df.to_parquet(parquet, engine="pyarrow")
+
+    import eeg.io as io_mod
+    import eeg.paths as paths_mod
+    import eeg.training.benchmark as bench_mod
+
+    def _results(d, e):
+        return tmp_path / "results" / d / e
+
+    monkeypatch.setattr(io_mod, "load_features_df", lambda d, e="baseline", i=None: df.copy())
+    monkeypatch.setattr(bench_mod, "load_features_df", lambda d, e="baseline", i=None: df.copy())
+    monkeypatch.setattr(paths_mod, "results_dir", _results)
+    monkeypatch.setattr(paths_mod, "figures_dir", lambda d, e: _results(d, e) / "figures")
+    monkeypatch.setattr(paths_mod, "models_dir", lambda d, e: tmp_path / "models" / d / e)
+    monkeypatch.setattr(bench_mod, "results_dir", _results)
+    monkeypatch.setattr(bench_mod, "figures_dir", lambda d, e: _results(d, e) / "figures")
+    monkeypatch.setattr(bench_mod, "models_dir", lambda d, e: tmp_path / "models" / d / e)
+
+    base_config = {
+        "seed": 42,
+        "cv_folds": 3,
+        "inner_cv_folds": 2,
+        "bootstrap_iterations": 10,
+        "features": {"feature_columns": [f"f{i}" for i in range(6)]},
+        "feature_selection": {"correlation_threshold": 0.99},
+    }
+    result = run_benchmark(
+        "eyesclosed",
+        "baseline",
+        models=["logistic_regression"],
+        config=base_config,
+        cv_folds=3,
+        threshold_optimization=True,
+        calibration_method="sigmoid",
+        output_tag="threshold_test",
+    )
+    row = result["rows"][0]
+    assert row["threshold_optimization"] is True
+    assert row["calibration_method"] == "sigmoid"
+    assert row["expected_calibration_error"] is not None
+    assert all(
+        fold["decision_thresholds"] and fold["calibration_method"] == "sigmoid"
+        for fold in result["benchmark_detail"]["logistic_regression"]["fold_details"]
+    )
+
+    for model_key in ("logistic_regression_l1_select", "logistic_regression_pca"):
+        variant = run_benchmark(
+            "eyesclosed",
+            "baseline",
+            models=[model_key],
+            config=base_config,
+            cv_folds=3,
+            output_tag=model_key,
+        )
+        assert variant["rows"][0]["model"] == model_key
+        assert variant["benchmark_detail"][model_key]["final_model"]["selected_features"]

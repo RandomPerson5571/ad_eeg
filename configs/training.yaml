@@ -4,6 +4,12 @@ cv_folds: 5
 inner_cv_folds: 3
 bootstrap_iterations: 1000
 
+# Optional decision-policy settings. The standard benchmark keeps the
+# historical argmax policy; scripts/run_extended_analysis.py enables these
+# for the dedicated threshold/calibration experiment.
+threshold_optimization: false
+calibration_method: null
+
 feature_selection:
   variance_threshold: 0.0
   correlation_threshold: 0.95
@@ -15,3 +21,13 @@ xgboost:
 
 mlp:
   hidden_layers: [128, 64]
+
+analysis:
+  threshold_optimization: true
+  calibration_method: sigmoid
+  permutations: 1000
+  univariate_top_k: [3, 5, 8, 12]
+  regularization_models:
+    - logistic_regression
+    - logistic_regression_l1
+    - logistic_regression_elasticnet

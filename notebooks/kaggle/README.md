@@ -118,6 +118,21 @@ python scripts/generate_kaggle_notebooks.py
 
 This only regenerates `.ipynb` files — execution still happens on Kaggle.
 
+## Automated execution
+
+The serial runner handles notebook submission, remote status polling, output
+Dataset versioning, and resume after interruption:
+
+```bash
+python scripts/generate_kaggle_notebooks.py
+python scripts/run_kaggle_pipeline.py --dry-run
+KAGGLE_USERNAME=your-user python scripts/run_kaggle_pipeline.py
+```
+
+Configure the matrix and raw Dataset handle in
+`configs/kaggle_pipeline.yaml`. See
+`docs/KAGGLE_AUTOMATION.md` for authentication, scheduling, and recovery.
+
 ## CLI equivalent (local or Kaggle)
 
 ```bash

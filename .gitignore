@@ -1,5 +1,8 @@
 .cursor/
 
+# Resumable Kaggle orchestration state, rendered kernels, and downloaded outputs
+.kaggle_pipeline/
+
 # --------------------
 # Python
 # --------------------

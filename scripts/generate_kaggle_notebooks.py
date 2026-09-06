@@ -32,6 +32,11 @@ REPO_BRANCH = "main"
 PROJECT_DIR = "/kaggle/temp/ad_eeg"  # temporary; excluded from saved notebook output
 OUTPUT_DIR = "/kaggle/working/pipeline_output"  # the only production artifact root
 
+# The automated runner embeds a run-specific dictionary here. Manual runs can
+# instead place run_config.json in the notebook working directory.
+RUN_CONFIG = {{}}
+RUN_CONFIG_FILE = "/kaggle/working/run_config.json"
+
 # Raw EEG is used only by notebooks 00 and 01.
 RAW_EEG_INPUT = {raw_eeg_input}
 
@@ -67,6 +72,25 @@ if globals().get("MODE") in {"inspect", "test"}:
     OUTPUT_DIR = Path("/kaggle/temp/pipeline_output")
 OUTPUT_DATA_DIR = OUTPUT_DIR / "data"
 KAGGLE_WORKING_DIR = Path("/kaggle/working")
+
+
+def _load_run_config() -> dict:
+    """Load per-run overrides supplied by the Kaggle orchestrator."""
+    candidates = [Path(RUN_CONFIG_FILE), Path.cwd() / "run_config.json"]
+    for candidate in candidates:
+        if candidate.is_file():
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise TypeError("run_config.json must contain a JSON object")
+            return payload
+    return RUN_CONFIG if isinstance(RUN_CONFIG, dict) else {}
+
+
+RUN_CONFIG = _load_run_config()
+REPO_URL = RUN_CONFIG.get("repo_url", REPO_URL)
+REPO_BRANCH = RUN_CONFIG.get("repo_branch", REPO_BRANCH)
+RAW_EEG_INPUT = RUN_CONFIG.get("raw_eeg_input", RAW_EEG_INPUT)
+PIPELINE_INPUT = RUN_CONFIG.get("pipeline_input", PIPELINE_INPUT)
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -357,23 +381,44 @@ if _is_configured(PIPELINE_INPUT):
 KAGGLE_SAVE = '''\
 # Artifacts already live in their final location; no large publish-time copy is needed.
 if Path("/kaggle/input").exists():
+    import json
+
+    status_path = OUTPUT_DATA_DIR / "pipeline_status.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "status": globals().get("PIPELINE_STATUS", "complete"),
+                "stage": NOTEBOOK_STAGE,
+                "dataset": RUN_CONFIG.get("dataset", globals().get("DATASET")),
+                "experiment": RUN_CONFIG.get("experiment", globals().get("EXPERIMENT")),
+                "feature_set": RUN_CONFIG.get("feature_set", "full"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     summarize_output()
 '''
 
 CONFIG_CELL = '''\
 from eeg.config import load_experiment, resolve_dataset
 from eeg.repro import init_repro, snapshot_environment
+from eeg.training.datasets import feature_columns
 
-EXPERIMENT = "baseline"
-dataset_spec = resolve_dataset("eyesclosed")[0]
+EXPERIMENT = RUN_CONFIG.get("experiment", "baseline")
+DATASET = RUN_CONFIG.get("dataset", "eyesclosed")
+FEATURE_SET = RUN_CONFIG.get("feature_set", "full")
+dataset_spec = resolve_dataset(DATASET)[0]
 config = load_experiment(EXPERIMENT)
+FEATURE_COLUMNS = feature_columns(config, FEATURE_SET)
 
 CONFIG = {
     "dataset": dataset_spec.name,
     "experiment": EXPERIMENT,
     "seed": config.get("training", {}).get("random_state", 42),
     "cv_folds": config.get("training", {}).get("cv_folds", 5),
-    "feature_set": "full",
+    "feature_set": FEATURE_SET,
+    "feature_columns": FEATURE_COLUMNS,
     "normalization": "zscore",
 }
 repro = init_repro(CONFIG["seed"])
@@ -385,14 +430,14 @@ PREPROCESS_PIPELINE_CONFIG = '''\
 # --- Pipeline configuration (edit before running) ---
 from pathlib import Path
 
-MODE = "test"          # "inspect" | "test" | "full"
-DATASET = "dataset2"   # "dataset2" | "dataset3" | "all"
-EXPERIMENT = "baseline"
-FORCE = False
-WORKERS = 2
-TEST_SUBJECTS = 5      # used when MODE == "test"
-INSPECT_SUBJECT = 1    # subject number when MODE == "inspect"
-KEEP_INTERMEDIATE_CHECKPOINTS = False  # False keeps epochs + QC/logs and saves substantial space
+MODE = RUN_CONFIG.get("mode", "test")       # "inspect" | "test" | "full"
+DATASET = RUN_CONFIG.get("dataset", "dataset2")  # "dataset2" | "dataset3" | "all"
+EXPERIMENT = RUN_CONFIG.get("experiment", "baseline")
+FORCE = bool(RUN_CONFIG.get("force", False))
+WORKERS = int(RUN_CONFIG.get("workers", 2))
+TEST_SUBJECTS = int(RUN_CONFIG.get("test_subjects", 5))
+INSPECT_SUBJECT = int(RUN_CONFIG.get("inspect_subject", 1))
+KEEP_INTERMEDIATE_CHECKPOINTS = bool(RUN_CONFIG.get("keep_intermediate_checkpoints", False))
 
 VALID_MODES = {"inspect", "test", "full"}
 if MODE not in VALID_MODES:
@@ -652,6 +697,19 @@ if MODE == "full" and Path("/kaggle/input").exists():
     for dataset_spec in dataset_specs:
         contract = validate_preprocessed_artifacts(dataset_spec.name, EXPERIMENT)
         print(f"Output contract ({dataset_spec.name}):", contract)
+    (OUTPUT_DATA_DIR / "pipeline_status.json").write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "stage": NOTEBOOK_STAGE,
+                "dataset": DATASET,
+                "experiment": EXPERIMENT,
+                "feature_set": RUN_CONFIG.get("feature_set", "full"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     summarize_output()
 elif MODE != "full":
     print(f"MODE={MODE!r}: skipping Kaggle dataset publish (use MODE='full' for production output).")
@@ -720,7 +778,7 @@ NOTEBOOKS = {
 from eeg.audit import audit_dataset, write_audit_artifacts
 from eeg.config import resolve_dataset
 
-for spec in resolve_dataset("all"):
+    for spec in resolve_dataset(RUN_CONFIG.get("dataset", "all")):
     result = audit_dataset(spec)
     paths = write_audit_artifacts(result, spec.name, environment=env)
     print(spec.name, result.dataset_summary)
@@ -801,12 +859,14 @@ print("Input contract:", input_contract)
 # with two workers, 24 subjects take roughly 4.3 hours. Set to None only outside
 # a runtime-limited environment.
 FEATURE_SUBJECT_LIMIT = 24
+FEATURE_SUBJECT_LIMIT = RUN_CONFIG.get("feature_subject_limit", FEATURE_SUBJECT_LIMIT)
+FEATURE_WORKERS = int(RUN_CONFIG.get("workers", 2))
 
 from scripts.extract_features import run_extract
 results = run_extract(
     CONFIG["dataset"],
     CONFIG["experiment"],
-    workers=2,
+    workers=FEATURE_WORKERS,
     limit=FEATURE_SUBJECT_LIMIT,
 )
 checkpointed = sum(
@@ -817,6 +877,7 @@ expected = input_contract["epoch_checkpoints"]
 from eeg.contracts import validate_feature_artifact
 from eeg.training.datasets import feature_columns
 if checkpointed < expected:
+    PIPELINE_STATUS = "partial"
     print(
         f"PARTIAL: {checkpointed}/{expected} subjects checkpointed. "
         "Publish this output as a new version of this notebook's existing Kaggle "
@@ -824,10 +885,11 @@ if checkpointed < expected:
         "version, keep PIPELINE_INPUT set to its slug, and run notebook 03 again."
     )
 else:
+    PIPELINE_STATUS = "complete"
     print(
         "COMPLETE — output contract:",
         validate_feature_artifact(
-            CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+            CONFIG["dataset"], CONFIG["experiment"], feature_columns(CONFIG)
         ),
     )
 '''),
@@ -860,11 +922,11 @@ spec = resolve_dataset(CONFIG["dataset"])[0]
 print(
     "Input contract:",
     validate_feature_artifact(
-        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns(CONFIG)
     ),
 )
 df = load_features_df(CONFIG["dataset"], CONFIG["experiment"], spec.id)
-cols = feature_columns()
+cols = feature_columns(CONFIG)
 result = select_features(df, cols, config=CONFIG)
 paths = save_selection_artifacts(df, result, CONFIG["dataset"], CONFIG["experiment"])
 print(f"Selected {result.n_selected}/{result.n_input} features")
@@ -895,11 +957,11 @@ spec = resolve_dataset(CONFIG["dataset"])[0]
 print(
     "Input contract:",
     validate_feature_artifact(
-        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns(CONFIG)
     ),
 )
 df = load_features_df(CONFIG["dataset"], CONFIG["experiment"], spec.id)
-sel = select_features(df, feature_columns(), config=CONFIG)
+sel = select_features(df, feature_columns(CONFIG), config=CONFIG)
 save_selection_artifacts(df, sel, CONFIG["dataset"], CONFIG["experiment"])
 print("Selection contract:", validate_selection_artifacts(CONFIG["dataset"], CONFIG["experiment"]))
 
@@ -1019,10 +1081,12 @@ import pandas as pd
 print(
     "Input contract:",
     validate_feature_artifact(
-        CONFIG["dataset"], CONFIG["experiment"], feature_columns()
+        CONFIG["dataset"], CONFIG["experiment"], feature_columns(CONFIG)
     ),
 )
-ablations = ["baseline", "fast", "ica95", "no_asr", "no_ref", "no_overlap"]
+ablations = RUN_CONFIG.get(
+    "ablations", ["baseline", "fast", "ica95", "no_asr", "no_ref", "no_overlap"]
+)
 frames = []
 for exp in ablations:
     CONFIG["experiment"] = exp
