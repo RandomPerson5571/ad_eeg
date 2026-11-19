@@ -284,10 +284,29 @@ def _fit_with_inner_cv(
         return candidate, {}, None, 0
 
     inner_cv = list(_grouped_stratified_splits(y, groups, inner_folds, seed))
+    # Give validation rows a positional index so each split can recover its
+    # participant IDs even when the input frame has duplicate index labels.
+    X = X.reset_index(drop=True)
+    n_classes = int(np.max(y)) + 1
+
+    def subject_score(estimator, validation_X, validation_y):
+        probabilities = _aligned_probabilities(estimator, validation_X, n_classes)
+        predictions = (
+            probabilities.argmax(axis=1)
+            if probabilities is not None
+            else estimator.predict(validation_X)
+        )
+        subjects = _aggregate_subject_predictions(
+            groups[validation_X.index], validation_y, predictions, probabilities, n_classes
+        )
+        return _fixed_label_balanced_accuracy(
+            subjects["y_true"].to_numpy(), subjects["y_pred"].to_numpy(), n_classes
+        )
+
     search = GridSearchCV(
         candidate,
         parameter_grid,
-        scoring="balanced_accuracy",
+        scoring=subject_score,
         cv=inner_cv,
         n_jobs=1,
         refit=True,
@@ -428,16 +447,10 @@ def _predict_with_threshold(y_proba: np.ndarray, thresholds: list[float] | np.nd
 
 
 def _fixed_label_balanced_accuracy(y_true: np.ndarray, y_pred: np.ndarray, n_classes: int) -> float:
-    cm = np.asarray(
-        pd.crosstab(
-            pd.Series(y_true, name="true"),
-            pd.Series(y_pred, name="pred"),
-            dropna=False,
-        ).reindex(index=range(n_classes), columns=range(n_classes), fill_value=0)
-    )
-    denominators = cm.sum(axis=1)
+    denominators = np.bincount(y_true, minlength=n_classes)
+    correct = np.bincount(y_true[y_true == y_pred], minlength=n_classes)
     recalls = np.divide(
-        np.diag(cm),
+        correct,
         denominators,
         out=np.zeros(n_classes, dtype=float),
         where=denominators != 0,
@@ -734,13 +747,12 @@ def run_benchmark(
         aggregate = compute_benchmark_metrics(oof_true, oof_pred, oof_proba, labels=labels)
 
         def _metric_fn(yt, yp, ypr):
-            return compute_benchmark_metrics(yt, yp, ypr, labels=labels)["balanced_accuracy"]
+            return _fixed_label_balanced_accuracy(yt, yp, len(labels))
 
         _, ci_lo, ci_hi = bootstrap_ci(
             _metric_fn,
             oof_true,
             oof_pred,
-            oof_proba,
             n=cfg.get("bootstrap_iterations", training_cfg.get("bootstrap_iterations", 1000)),
             seed=seed,
             strata=oof_true,
@@ -847,6 +859,7 @@ def run_benchmark(
             "evaluation": "nested_stratified_group_cv_subject_oof",
             "outer_cv_folds": outer_folds,
             "requested_inner_cv_folds": requested_inner,
+            "inner_scoring": "subject_balanced_accuracy",
             "threshold_optimization": bool(threshold_optimization),
             "calibration_method": calibration_method,
             "label_permutation_seed": label_permutation_seed,
