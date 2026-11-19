@@ -157,11 +157,12 @@ def build_jobs(config: dict[str, Any]) -> list[Job]:
     jobs: list[Job] = []
     for stage in stages:
         if stage == "00":
+            audit_dataset = datasets[0] if len(datasets) == 1 else "all"
             jobs.append(
                 Job(
-                    job_id=f"{stage}:all:{experiments[0]}:{feature_sets[0]}",
+                    job_id=f"{stage}:{audit_dataset}:{experiments[0]}:{feature_sets[0]}",
                     stage=stage,
-                    dataset="all",
+                    dataset=audit_dataset,
                     experiment=experiments[0],
                     feature_set=feature_sets[0],
                 )
@@ -448,7 +449,7 @@ class PipelineRunner:
 
     def kernel_id(self, job: Job) -> str:
         slug = slugify(
-            f"{self.kernel_prefix}-{job.dataset}-{job.experiment}-{job.feature_set}-{job.stage}"
+            f"{self.kernel_prefix}-{job.job_id}", 50
         )
         return f"{self.owner}/{slug}"
 
@@ -531,7 +532,7 @@ class PipelineRunner:
         machine_shape = options.get("machine_shape", "")
         metadata = {
             "id": kernel_id,
-            "title": slugify(f"{self.kernel_prefix}-{job.job_id}", 50),
+            "title": kernel_id.split("/", 1)[1],
             "code_file": notebook_name,
             "language": "python",
             "kernel_type": "notebook",
@@ -663,7 +664,8 @@ class PipelineRunner:
             )
         partial_runs = int(record.get("partial_runs", 0))
         while True:
-            attempt = int(record.get("attempts", 0)) + 1
+            resume = record.get("status") == "running" and bool(record.get("push_output"))
+            attempt = int(record.get("attempts", 0)) + (0 if resume else 1)
             input_dataset = self.input_dataset(job)
             output_dataset = self.dataset_id(job)
             kernel_dir, kernel_id = self.render_kernel(job, attempt, input_dataset)
@@ -672,7 +674,7 @@ class PipelineRunner:
                     "status": "running",
                     "attempts": attempt,
                     "kernel_id": kernel_id,
-                    "started_at": utc_now(),
+                    "started_at": record.get("started_at") if resume else utc_now(),
                     "input_dataset": input_dataset,
                 }
             )
@@ -686,8 +688,9 @@ class PipelineRunner:
                     previous_status = self.cli.status(kernel_id)
                 except KaggleCommandError:
                     previous_status = ""
-                push_output = self.cli.push(kernel_dir, timeout)
-                record["push_output"] = push_output[-4000:]
+                if not resume:
+                    push_output = self.cli.push(kernel_dir, timeout)
+                    record["push_output"] = push_output[-4000:]
                 self.state.save()
                 log_path = kernel_dir / "kernel-status.log"
                 status = self.wait_for_kernel(kernel_id, log_path, previous_status)

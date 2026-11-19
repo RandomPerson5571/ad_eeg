@@ -778,7 +778,7 @@ NOTEBOOKS = {
 from eeg.audit import audit_dataset, write_audit_artifacts
 from eeg.config import resolve_dataset
 
-    for spec in resolve_dataset(RUN_CONFIG.get("dataset", "all")):
+for spec in resolve_dataset(RUN_CONFIG.get("dataset", "all")):
     result = audit_dataset(spec)
     paths = write_audit_artifacts(result, spec.name, environment=env)
     print(spec.name, result.dataset_summary)
@@ -1194,6 +1194,9 @@ def validate_notebook(name: str, notebook: dict) -> None:
         for cell in notebook["cells"]
         if cell["cell_type"] == "code"
     )
+    for index, cell in enumerate(notebook["cells"]):
+        if cell["cell_type"] == "code":
+            compile("".join(cell["source"]), f"{name} cell {index}", "exec")
     forbidden = {
         "/kaggle/working/ad_eeg": "repository clone would leak into saved output",
         'shutil.copytree(src, out / "data"': "publish step would duplicate the artifact tree",

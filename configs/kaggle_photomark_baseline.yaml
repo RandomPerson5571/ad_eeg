@@ -1,0 +1,22 @@
+# Stage 05 produces the subject-level cross-dataset comparison metrics.
+kaggle:
+  owner: "boberto10"
+  raw_dataset: "boberto10/eeg-dataset"
+  repo_url: "https://github.com/RandomPerson5571/ad_eeg.git"
+  repo_branch: "main"
+  kernel_prefix: "ad-eeg-photomark-baseline"
+  output_dataset_prefix: "ad-eeg-photomark-baseline"
+  state_path: ".kaggle_pipeline/photomark_baseline/state.json"
+  work_dir: ".kaggle_pipeline/photomark_baseline"
+  timeout_seconds: 32400
+  poll_interval_seconds: 60
+  max_partial_runs: 64
+
+stages: ["00", "01", "02", "03", "04", "05"]
+matrix:
+  datasets: [photomark]
+  experiments: [baseline]
+  feature_sets: [full]
+stage_options:
+  "03":
+    feature_subject_limit: 8
